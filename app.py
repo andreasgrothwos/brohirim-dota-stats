@@ -140,6 +140,39 @@ def process_matches(matches, steam_id, player_name, all_steam_ids):
         assists = player_data["assists"]
         kda = round((kills + assists) / deaths, 2)
         
+        # Map position to role name
+        position_map = {
+            "POSITION_1": "Carry (Pos 1)",
+            "POSITION_2": "Mid (Pos 2)",
+            "POSITION_3": "Offlane (Pos 3)",
+            "POSITION_4": "Soft Support (Pos 4)",
+            "POSITION_5": "Hard Support (Pos 5)",
+            "UNKNOWN": "Unknown"
+        }
+        
+        position = player_data.get("position", "UNKNOWN")
+        role = position_map.get(position, "Unknown")
+        
+        # Get lane info for laning analysis
+        lane_map = {
+            "SAFE_LANE": "Safe Lane",
+            "MID_LANE": "Mid Lane",
+            "OFF_LANE": "Off Lane",
+            "JUNGLE": "Jungle",
+            "ROAMING": "Roaming",
+            "UNKNOWN": "Unknown"
+        }
+        lane = player_data.get("lane", "UNKNOWN")
+        lane_name = lane_map.get(lane, "Unknown")
+        
+        # Find teammates in same lane (for laning partner analysis)
+        same_lane_teammates = [
+            t for t in brohirim_teammates 
+            if t.get("lane") == lane and lane != "UNKNOWN"
+        ]
+        lane_partner_names = [list(PLAYERS.keys())[list(PLAYERS.values()).index(t["steamAccountId"])] 
+                             for t in same_lane_teammates]
+        
         processed_data.append({
             "player_name": player_name,
             "match_id": match_id,
@@ -153,9 +186,12 @@ def process_matches(matches, steam_id, player_name, all_steam_ids):
             "assists": assists,
             "kda": kda,
             "level": player_data.get("level"),
-            "position": player_data.get("position", "Unknown"),
+            "position": position,
+            "role": role,
+            "lane": lane_name,
             "is_party": is_party,
-            "party_with": ", ".join(friend_names) if friend_names else None
+            "party_with": ", ".join(friend_names) if friend_names else None,
+            "lane_partner": ", ".join(lane_partner_names) if lane_partner_names else None
         })
     
     return processed_data
@@ -415,6 +451,220 @@ def main():
     fig6.add_hline(y=df["performance_score"].mean(), line_dash="dash", annotation_text="Overall Average")
     st.plotly_chart(fig6, use_container_width=True)
     
+    # ROLE PERFORMANCE ANALYSIS
+    st.header("🎯 Role Performance Analysis")
+    
+    # Filter out Unknown roles for cleaner analysis
+    df_with_roles = df[df["role"] != "Unknown"].copy()
+    
+    if not df_with_roles.empty:
+        role_stats = df_with_roles.groupby(["player_name", "role"]).agg({
+            "performance_score": "mean",
+            "is_victory": lambda x: (x.sum() / len(x) * 100),
+            "match_id": "count",
+            "kda": "mean"
+        }).round(2).reset_index()
+        role_stats.columns = ["Player", "Role", "Avg Performance", "Win Rate %", "Games", "Avg KDA"]
+        
+        # Only show roles with at least 3 games
+        role_stats = role_stats[role_stats["Games"] >= 3]
+        
+        if not role_stats.empty:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Performance by role
+                fig_role_perf = px.bar(
+                    role_stats,
+                    x="Role",
+                    y="Avg Performance",
+                    color="Player",
+                    barmode="group",
+                    title="Average Performance by Role",
+                    text="Avg Performance"
+                )
+                fig_role_perf.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+                fig_role_perf.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig_role_perf, use_container_width=True)
+            
+            with col2:
+                # Win rate by role
+                fig_role_wr = px.bar(
+                    role_stats,
+                    x="Role",
+                    y="Win Rate %",
+                    color="Player",
+                    barmode="group",
+                    title="Win Rate by Role",
+                    text="Win Rate %"
+                )
+                fig_role_wr.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+                fig_role_wr.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig_role_wr, use_container_width=True)
+            
+            # Heatmap showing best roles for each player
+            st.subheader("🔥 Role Performance Heatmap")
+            
+            pivot_perf = role_stats.pivot(index="Player", columns="Role", values="Avg Performance")
+            pivot_games = role_stats.pivot(index="Player", columns="Role", values="Games")
+            
+            # Create custom text showing performance and game count
+            custom_text = []
+            for i, player in enumerate(pivot_perf.index):
+                row_text = []
+                for role in pivot_perf.columns:
+                    perf = pivot_perf.loc[player, role]
+                    games = pivot_games.loc[player, role]
+                    if pd.notna(perf):
+                        row_text.append(f"{perf:.1f}<br>({int(games)} games)")
+                    else:
+                        row_text.append("")
+                custom_text.append(row_text)
+            
+            fig_heatmap = go.Figure(data=go.Heatmap(
+                z=pivot_perf.values,
+                x=pivot_perf.columns,
+                y=pivot_perf.index,
+                text=custom_text,
+                texttemplate='%{text}',
+                colorscale='RdYlGn',
+                colorbar=dict(title="Performance"),
+                hoverongaps=False
+            ))
+            
+            fig_heatmap.update_layout(
+                title="Performance Score by Player and Role (min 3 games)",
+                xaxis_title="Role",
+                yaxis_title="Player",
+                height=400
+            )
+            
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+            
+            # Best role for each player
+            st.subheader("⭐ Best Role for Each Player")
+            
+            best_roles = role_stats.loc[role_stats.groupby("Player")["Avg Performance"].idxmax()]
+            best_roles_display = best_roles[["Player", "Role", "Avg Performance", "Win Rate %", "Games", "Avg KDA"]]
+            
+            st.dataframe(
+                best_roles_display,
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Role distribution
+            st.subheader("📊 Role Distribution")
+            
+            role_distribution = df_with_roles.groupby(["player_name", "role"]).size().reset_index(name="Games")
+            
+            fig_role_dist = px.sunburst(
+                role_distribution,
+                path=["player_name", "role"],
+                values="Games",
+                title="How Often Each Player Plays Each Role"
+            )
+            st.plotly_chart(fig_role_dist, use_container_width=True)
+        else:
+            st.info("Not enough games per role for analysis (minimum 3 games required)")
+    else:
+        st.info("No role information available in the data")
+    
+    # LANING PARTNER ANALYSIS
+    st.header("🤝 Laning Partner Analysis")
+    
+    df_with_partners = df[df["lane_partner"].notna()].copy()
+    
+    if not df_with_partners.empty:
+        st.write("Analysis of performance when laning with teammates")
+        
+        # Create laning partner combinations
+        laning_stats = df_with_partners.groupby(["player_name", "lane_partner", "lane"]).agg({
+            "performance_score": "mean",
+            "is_victory": lambda x: (x.sum() / len(x) * 100),
+            "match_id": "count",
+            "kda": "mean"
+        }).round(2).reset_index()
+        laning_stats.columns = ["Player", "Lane Partner", "Lane", "Avg Performance", "Win Rate %", "Games", "Avg KDA"]
+        
+        # Filter for at least 2 games together
+        laning_stats = laning_stats[laning_stats["Games"] >= 2].sort_values("Avg Performance", ascending=False)
+        
+        if not laning_stats.empty:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Performance with lane partners
+                fig_lane_perf = px.bar(
+                    laning_stats.head(15),
+                    x="Avg Performance",
+                    y="Player",
+                    color="Lane Partner",
+                    title="Top 15 Laning Partnerships by Performance",
+                    text="Avg Performance",
+                    orientation="h",
+                    hover_data=["Lane", "Games", "Win Rate %"]
+                )
+                fig_lane_perf.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+                st.plotly_chart(fig_lane_perf, use_container_width=True)
+            
+            with col2:
+                # Win rate with lane partners
+                fig_lane_wr = px.bar(
+                    laning_stats.head(15),
+                    x="Win Rate %",
+                    y="Player",
+                    color="Lane Partner",
+                    title="Top 15 Laning Partnerships by Win Rate",
+                    text="Win Rate %",
+                    orientation="h",
+                    hover_data=["Lane", "Games", "Avg Performance"]
+                )
+                fig_lane_wr.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+                st.plotly_chart(fig_lane_wr, use_container_width=True)
+            
+            # Best laning partnerships table
+            st.subheader("🏆 Best Laning Partnerships")
+            
+            best_partnerships = laning_stats.nlargest(10, "Avg Performance")
+            
+            st.dataframe(
+                best_partnerships,
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Lane preference analysis
+            st.subheader("🗺️ Lane Performance by Player")
+            
+            lane_perf = df[df["lane"] != "Unknown"].groupby(["player_name", "lane"]).agg({
+                "performance_score": "mean",
+                "is_victory": lambda x: (x.sum() / len(x) * 100),
+                "match_id": "count"
+            }).round(2).reset_index()
+            lane_perf.columns = ["Player", "Lane", "Avg Performance", "Win Rate %", "Games"]
+            lane_perf = lane_perf[lane_perf["Games"] >= 3]
+            
+            if not lane_perf.empty:
+                fig_lane_pref = px.bar(
+                    lane_perf,
+                    x="Lane",
+                    y="Avg Performance",
+                    color="Player",
+                    barmode="group",
+                    title="Performance by Lane (min 3 games)",
+                    text="Avg Performance"
+                )
+                fig_lane_pref.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+                fig_lane_pref.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig_lane_pref, use_container_width=True)
+        else:
+            st.info("Not enough games with lane partners for analysis (minimum 2 games required)")
+    else:
+        st.info("No laning partner data available")
+    
+    st.markdown("---")
+    
     # Detailed statistics table
     st.header("📋 Detailed Statistics")
     
@@ -439,16 +689,16 @@ def main():
     st.header("🕐 Recent Matches")
     
     recent_matches = df.sort_values("match_date", ascending=False).head(20)[
-        ["match_date", "player_name", "hero", "is_victory", "performance_score", 
-         "kills", "deaths", "assists", "kda", "is_party"]
+        ["match_date", "player_name", "hero", "role", "lane", "is_victory", "performance_score", 
+         "kills", "deaths", "assists", "kda", "is_party", "lane_partner"]
     ].copy()
     
     recent_matches["match_date"] = recent_matches["match_date"].dt.strftime("%Y-%m-%d %H:%M")
     recent_matches["is_victory"] = recent_matches["is_victory"].map({True: "✅ Win", False: "❌ Loss"})
     recent_matches["is_party"] = recent_matches["is_party"].map({True: "👥", False: "🧍"})
     
-    recent_matches.columns = ["Date", "Player", "Hero", "Result", "Performance", 
-                             "K", "D", "A", "KDA", "Party"]
+    recent_matches.columns = ["Date", "Player", "Hero", "Role", "Lane", "Result", "Performance", 
+                             "K", "D", "A", "KDA", "Party", "Lane Partner"]
     
     st.dataframe(
         recent_matches,
