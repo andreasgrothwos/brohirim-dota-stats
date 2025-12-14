@@ -10,6 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
+import numpy as np
 
 # Page configuration
 st.set_page_config(
@@ -29,7 +30,15 @@ PLAYERS = {
 }
 
 # API Configuration
-API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJTdWJqZWN0IjoiYjc5NjU4N2EtY2M3Mi00MGQ1LThmMzktM2I0ZWU2ZjNkOGEzIiwiU3RlYW1JZCI6IjMzMzYyNjQiLCJBUElVc2VyIjoidHJ1ZSIsIm5iZiI6MTc2NTE0MDAxMCwiZXhwIjoxNzk2Njc2MDEwLCJpYXQiOjE3NjUxNDAwMTAsImlzcyI6Imh0dHBzOi8vYXBpLnN0cmF0ei5jb20ifQ.Cs97lOQWaxAvZlIwW2YKrKIt6niGTw6B9_Q4YbW1ZYc"
+# For local development, use secrets.toml
+# For Streamlit Cloud, add this in the app settings
+try:
+    API_KEY = st.secrets["STRATZ_API_KEY"]
+except (FileNotFoundError, KeyError):
+    st.error("⚠️ API Key not found! Please configure it in Streamlit secrets.")
+    st.info("For local development: Create .streamlit/secrets.toml with your API key")
+    st.info("For Streamlit Cloud: Add STRATZ_API_KEY in app settings > Secrets")
+    st.stop()
 
 
 @st.cache_data(ttl=3600)  # Cache for 1 hour
