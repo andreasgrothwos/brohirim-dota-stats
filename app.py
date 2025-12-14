@@ -147,10 +147,9 @@ def process_matches(matches, steam_id, player_name, all_steam_ids):
             "POSITION_3": "Offlane (Pos 3)",
             "POSITION_4": "Soft Support (Pos 4)",
             "POSITION_5": "Hard Support (Pos 5)",
-            "UNKNOWN": "Unknown"
         }
         
-        position = player_data.get("position", "UNKNOWN")
+        position = player_data.get("position")
         role = position_map.get(position, "Unknown")
         
         # Get lane info for laning analysis
@@ -160,15 +159,14 @@ def process_matches(matches, steam_id, player_name, all_steam_ids):
             "OFF_LANE": "Off Lane",
             "JUNGLE": "Jungle",
             "ROAMING": "Roaming",
-            "UNKNOWN": "Unknown"
         }
-        lane = player_data.get("lane", "UNKNOWN")
+        lane = player_data.get("lane")
         lane_name = lane_map.get(lane, "Unknown")
         
         # Find teammates in same lane (for laning partner analysis)
         same_lane_teammates = [
             t for t in brohirim_teammates 
-            if t.get("lane") == lane and lane != "UNKNOWN"
+            if t.get("lane") == lane and lane is not None and lane != "UNKNOWN"
         ]
         lane_partner_names = [list(PLAYERS.keys())[list(PLAYERS.values()).index(t["steamAccountId"])] 
                              for t in same_lane_teammates]
@@ -186,13 +184,15 @@ def process_matches(matches, steam_id, player_name, all_steam_ids):
             "assists": assists,
             "kda": kda,
             "level": player_data.get("level"),
-            "position": position,
+            "position": position if position else "Unknown",
             "role": role,
             "lane": lane_name,
             "is_party": is_party,
             "party_with": ", ".join(friend_names) if friend_names else None,
             "lane_partner": ", ".join(lane_partner_names) if lane_partner_names else None
         })
+    
+    return processed_data
     
     return processed_data
 
