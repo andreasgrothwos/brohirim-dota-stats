@@ -14,6 +14,9 @@ import numpy as np
 from PIL import Image
 import os
 
+from pathlib import Path
+
+
 # Page configuration
 st.set_page_config(
     page_title="Brohirim Dota 2 Stats",
@@ -42,18 +45,23 @@ except (FileNotFoundError, KeyError):
     st.info("For Streamlit Cloud: Add STRATZ_API_KEY in app settings > Secrets")
     st.stop()
 
+BASE_DIR = Path.cwd()
+IMAGE_DIR = BASE_DIR / "images"
 
 def load_player_image(player_name):
     """Load player profile picture if it exists"""
-    image_path = f"images/{player_name}.jpg"
-    if os.path.exists(image_path):
+    image_path = IMAGE_DIR / f"{player_name}.jpg"
+
+    if image_path.exists():
         try:
-            return Image.open(image_path)
+            img = Image.open(image_path)
+            # st.image(img)
+            return img
         except Exception as e:
             st.warning(f"Could not load image for {player_name}: {e}")
             return None
-    return None
 
+    return None
 
 def display_player_cards(selected_players, df):
     """Display player cards with profile pictures and quick stats, sorted by performance"""
@@ -1548,3 +1556,4 @@ def show_match_history_page(df):
 
 if __name__ == "__main__":
     main()
+
