@@ -16,7 +16,7 @@ from pathlib import Path
 # Page configuration
 st.set_page_config(
     page_title="Brohirim Dota 2 Stats",
-    page_icon="🎮",
+    page_icon="👏",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -289,7 +289,7 @@ def load_full_year_data(selected_players):
 
 def display_player_cards(selected_players, df):
     """Display player cards sorted by performance"""
-    st.subheader("👥 Player Overview (Sorted by Performance)")
+    st.subheader("👥 Spilleroversigt (sorteret efter performance)")
     
     player_stats = []
     for player in selected_players:
@@ -326,8 +326,8 @@ def display_player_cards(selected_players, df):
                 st.markdown(f"### {player}")
             
             st.metric("Matches", player_info["matches"])
-            st.metric("Win Rate", f"{player_info['win_rate']:.1f}%")
-            st.metric("Avg Performance", f"{player_info['avg_perf']:.1f}")
+            st.metric("Win rate", f"{player_info['win_rate']:.1f}%")
+            st.metric("Gns. performance", f"{player_info['avg_perf']:.1f}")
     
     st.markdown("---")
 
@@ -335,76 +335,83 @@ def display_player_cards(selected_players, df):
 def main():
     """Main app"""
     
-    st.title("🎮 Brohirim Dota 2 Statistics Dashboard")
+    st.title("👏 Brohirim Dota")
     st.markdown("---")
     
     # Sidebar
     with st.sidebar:
-        st.header("⚙️ Configuration")
+        st.header("⚙️ Indstillinger")
         
         page = st.selectbox(
-            "📄 Select Page",
-            ["🏠 Overview", "📊 Performance Analysis", "🎯 Role & Position", "🤝 Team Synergy", "📋 Match History"]
+            "📄 Vælg side",
+            ["🏠 Overblik", "📊 Performance", "🎯 Rolle & position", "🤝 Lanes", "📋 Matches"]
         )
         
         st.markdown("---")
         
         selected_players = st.multiselect(
-            "Select Players",
+            "Vælg spillere",
             options=list(PLAYERS.keys()),
             default=list(PLAYERS.keys())
         )
         
         st.markdown("---")
-        st.subheader("📅 Filter Loaded Data")
+        st.subheader("📅 Filtrer data")
         
         time_range = st.selectbox(
-            "Time Range",
-            options=["All data", "Last 7 days", "Last 30 days", "Last 90 days", "2025 only", "Custom"],
-            index=0,
-            help="Filter cached data - no API calls"
+            "Tidsperiode",
+            options=["Alle data", "I dag", "Sidste 7 dage", "Sidste 30 dage", "Sidste 90 dage", "2025 kun", "Brugerdefineret"],
+            index=3,
+            help="Filtrer cached data - ingen API kald"
         )
         
-        if time_range == "Custom":
-            start_date = st.date_input("Start date", value=datetime(2025, 1, 1))
+        if time_range == "Brugerdefineret":
+            start_date = st.date_input("Start dato", value=datetime(2025, 1, 1))
             filter_start_date = datetime.combine(start_date, datetime.min.time())
-        elif time_range == "Last 7 days":
+        elif time_range == "I dag":
+            filter_start_date = datetime.now() - timedelta(hours=16)
+        elif time_range == "Sidste 7 dage":
             filter_start_date = datetime.now() - timedelta(days=7)
-        elif time_range == "Last 30 days":
+        elif time_range == "Sidste 30 dage":
             filter_start_date = datetime.now() - timedelta(days=30)
-        elif time_range == "Last 90 days":
+        elif time_range == "Sidste 90 dage":
             filter_start_date = datetime.now() - timedelta(days=90)
-        elif time_range == "2025 only":
+        elif time_range == "2025 kun":
             filter_start_date = datetime(2025, 1, 1)
         else:
             filter_start_date = None
         
         limit_matches = st.selectbox(
-            "Limit to recent N matches",
-            options=["All matches", "Last 10", "Last 20", "Last 50"],
+            "Begræns til seneste N kampe",
+            options=["Alle kampe", "Sidste 10", "Sidste 20", "Sidste 50"],
             index=0,
-            help="Most recent N matches per player"
+            help="Seneste N kampe per spiller"
         )
         
         st.markdown("---")
-        if st.button("🔄 Refresh Data", use_container_width=True):
+        if st.button("🔄 Opdater data", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
         
+        if st.button("⚡ Quick refresh (seneste timer)", use_container_width=True, help="Indlæser kun matches fra de seneste 3 timer"):
+            # Clear only the fetch cache to get fresh recent data
+            fetch_all_matches_for_player.clear()
+            st.rerun()
+        
         st.markdown("---")
-        st.caption("💡 Data loaded once, cached 2 hours")
+        st.caption("💡 Data indlæst én gang, cached 2 timer")
         st.caption(f"⏰ {datetime.now().strftime('%H:%M:%S')}")
     
     if not selected_players:
-        st.warning("Select at least one player")
+        st.warning("Vælg mindst én spiller")
         return
     
     # Load data once
-    with st.spinner("🔄 Loading last year's data..."):
+    with st.spinner("🔄 Indlæser data fra det sidste år..."):
         df_full = load_full_year_data(selected_players)
     
     if df_full.empty:
-        st.error("No data available")
+        st.error("Ingen data tilgængelig")
         return
     
     # Filter in memory - NO API CALLS
@@ -413,26 +420,26 @@ def main():
     if filter_start_date:
         df = df[df["match_date"] >= filter_start_date]
     
-    if limit_matches != "All matches":
+    if limit_matches != "Alle kampe":
         n = int(limit_matches.split()[-1])
         df = df.sort_values("match_date", ascending=False).groupby("player_name").head(n).reset_index(drop=True)
     
     if df.empty:
-        st.warning("No matches with current filters")
+        st.warning("Ingen matches med nuværende filtre")
         return
     
-    st.info(f"📊 {len(df)} matches | {df['match_date'].min().date()} to {df['match_date'].max().date()}")
+    st.info(f"📊 {len(df)} matches | {df['match_date'].min().date()} til {df['match_date'].max().date()}")
     
     # Route to pages
-    if page == "🏠 Overview":
+    if page == "🏠 Overblik":
         show_overview_page(df, selected_players)
-    elif page == "📊 Performance Analysis":
+    elif page == "📊 Performance":
         show_performance_page(df, selected_players)
-    elif page == "🎯 Role & Position":
+    elif page == "🎯 Rolle & position":
         show_role_page(df)
-    elif page == "🤝 Team Synergy":
+    elif page == "🤝 Lanes":
         show_synergy_page(df)
-    elif page == "📋 Match History":
+    elif page == "📋 Matches":
         show_match_history_page(df)
 
 
@@ -440,22 +447,22 @@ def show_overview_page(df, selected_players):
     """Overview page"""
     display_player_cards(selected_players, df)
     
-    st.header("📊 Overview")
+    st.header("📊 Overblik")
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Total Matches", len(df))
+        st.metric("Total matches", len(df))
     with col2:
         win_rate = (df["is_victory"].sum() / len(df) * 100)
-        st.metric("Win Rate", f"{win_rate:.1f}%")
+        st.metric("Win rate", f"{win_rate:.1f}%")
     with col3:
-        st.metric("Avg Performance", f"{df['performance_score'].mean():.1f}")
+        st.metric("Gns. performance", f"{df['performance_score'].mean():.1f}")
     with col4:
         party_rate = (df["is_party"].sum() / len(df) * 100)
-        st.metric("Party Rate", f"{party_rate:.1f}%")
+        st.metric("Party rate", f"{party_rate:.1f}%")
     
     st.markdown("---")
-    st.header("👥 Player Comparison")
+    st.header("👥 Sammenligning af spillere")
     
     col1, col2 = st.columns(2)
     
@@ -464,12 +471,12 @@ def show_overview_page(df, selected_players):
             "performance_score": "mean",
             "match_id": "count"
         }).round(2).reset_index()
-        player_stats.columns = ["Player", "Avg Performance", "Matches"]
-        player_stats = player_stats.sort_values("Avg Performance", ascending=True)
+        player_stats.columns = ["Spiller", "Gns. performance", "Matches"]
+        player_stats = player_stats.sort_values("Gns. performance", ascending=True)
         
-        fig1 = px.bar(player_stats, x="Avg Performance", y="Player", orientation="h",
-                     title="Average Performance", text="Avg Performance",
-                     color="Avg Performance", color_continuous_scale="RdYlGn")
+        fig1 = px.bar(player_stats, x="Gns. performance", y="Spiller", orientation="h",
+                     title="Gennemsnitlig performance", text="Gns. performance",
+                     color="Gns. performance", color_continuous_scale="RdYlGn")
         fig1.update_traces(texttemplate='%{text:.1f}', textposition='outside')
         fig1.update_layout(showlegend=False, height=400)
         st.plotly_chart(fig1, use_container_width=True)
@@ -479,26 +486,26 @@ def show_overview_page(df, selected_players):
             "is_victory": lambda x: (x.sum() / len(x) * 100),
             "match_id": "count"
         }).round(1).reset_index()
-        win_stats.columns = ["Player", "Win Rate %", "Matches"]
-        win_stats = win_stats.sort_values("Win Rate %", ascending=True)
+        win_stats.columns = ["Spiller", "Win rate %", "Matches"]
+        win_stats = win_stats.sort_values("Win rate %", ascending=True)
         
-        fig2 = px.bar(win_stats, x="Win Rate %", y="Player", orientation="h",
-                     title="Win Rate", text="Win Rate %",
-                     color="Win Rate %", color_continuous_scale="RdYlGn")
+        fig2 = px.bar(win_stats, x="Win rate %", y="Spiller", orientation="h",
+                     title="Win rate", text="Win rate %",
+                     color="Win rate %", color_continuous_scale="RdYlGn")
         fig2.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
         fig2.update_layout(showlegend=False, height=400)
         st.plotly_chart(fig2, use_container_width=True)
     
-    st.header("📈 Performance Distribution")
+    st.header("📈 Performance fordeling")
     fig3 = px.box(df, x="player_name", y="performance_score", color="player_name",
-                 title="Performance Score Distribution")
+                 title="Performance score fordeling")
     fig3.update_layout(showlegend=False, height=400)
     st.plotly_chart(fig3, use_container_width=True)
 
 
 def show_performance_page(df, selected_players):
     """Performance page"""
-    st.header("📊 Performance Analysis")
+    st.header("📊 Performance")
     
     st.subheader("👥 Party vs Solo")
     party_comparison = df.groupby(["player_name", "is_party"]).agg({
@@ -506,38 +513,53 @@ def show_performance_page(df, selected_players):
         "is_victory": lambda x: (x.sum() / len(x) * 100),
         "match_id": "count"
     }).round(2).reset_index()
-    party_comparison.columns = ["Player", "Is Party", "Avg Performance", "Win Rate %", "Matches"]
-    party_comparison["Game Type"] = party_comparison["Is Party"].map({True: "Party", False: "Solo"})
+    party_comparison.columns = ["Spiller", "Er party", "Gns. performance", "Win rate %", "Matches"]
+    party_comparison["Kamptype"] = party_comparison["Er party"].map({True: "Party", False: "Solo"})
     
     col1, col2 = st.columns(2)
     with col1:
-        fig4 = px.bar(party_comparison, x="Player", y="Avg Performance", color="Game Type",
-                     barmode="group", title="Performance: Party vs Solo", text="Avg Performance")
+        fig4 = px.bar(party_comparison, x="Spiller", y="Gns. performance", color="Kamptype",
+                     barmode="group", title="Performance: Party vs Solo", text="Gns. performance")
         fig4.update_traces(texttemplate='%{text:.1f}', textposition='outside')
         st.plotly_chart(fig4, use_container_width=True)
     
     with col2:
-        fig5 = px.bar(party_comparison, x="Player", y="Win Rate %", color="Game Type",
-                     barmode="group", title="Win Rate: Party vs Solo", text="Win Rate %")
+        fig5 = px.bar(party_comparison, x="Spiller", y="Win rate %", color="Kamptype",
+                     barmode="group", title="Win rate: Party vs Solo", text="Win rate %")
         fig5.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
         st.plotly_chart(fig5, use_container_width=True)
     
     if df["is_party"].any():
-        st.subheader("🤝 Party Combinations")
+        st.subheader("🤝 Party kombinationer")
         party_games = df[df["is_party"] & df["party_with"].notna()].copy()
         if not party_games.empty:
-            party_combos = party_games.groupby(["player_name", "party_with"]).size().reset_index(name="Games Together")
-            party_combos = party_combos.sort_values("Games Together", ascending=False)
+            # Normalize combinations by sorting player names alphabetically
+            def normalize_combo(row):
+                players = [row["player_name"]] + row["party_with"].split(", ")
+                return ", ".join(sorted(players))
+            
+            party_games["combo"] = party_games.apply(normalize_combo, axis=1)
+            party_combos = party_games.groupby("combo").size().reset_index(name="Matches sammen")
+            party_combos = party_combos.sort_values("Matches sammen", ascending=False)
+            party_combos.columns = ["Spillere", "Matches sammen"]
+            
             st.dataframe(party_combos, use_container_width=True, hide_index=True)
     
-    st.subheader("📅 Performance Over Time")
+    st.subheader("📅 Performance over tid")
     df_sorted = df.sort_values("match_date")
-    fig6 = px.line(df_sorted, x="match_date", y="performance_score", color="player_name",
-                  title="Performance Trend")
-    fig6.add_hline(y=df["performance_score"].mean(), line_dash="dash", annotation_text="Average")
+    
+    # Calculate Brohirim clan average per date
+    clan_avg = df_sorted.groupby("match_date")["performance_score"].mean().reset_index()
+    clan_avg["player_name"] = "Brohirim gennemsnit"
+    
+    fig6 = px.line(clan_avg, x="match_date", y="performance_score",
+                  title="Performance trend - Brohirim gennemsnit",
+                  labels={"match_date": "Dato", "performance_score": "Performance score"})
+    fig6.add_hline(y=df["performance_score"].mean(), line_dash="dash", annotation_text="Samlet gennemsnit")
+    fig6.update_traces(line=dict(color='#636EFA', width=3))
     st.plotly_chart(fig6, use_container_width=True)
     
-    st.subheader("📋 Detailed Statistics")
+    st.subheader("📋 Detaljerede statistikker")
     detailed_stats = df.groupby("player_name").agg({
         "match_id": "count",
         "is_victory": ["sum", lambda x: (x.sum() / len(x) * 100)],
@@ -548,9 +570,9 @@ def show_performance_page(df, selected_players):
         "assists": "mean",
         "is_party": "sum"
     }).round(2)
-    detailed_stats.columns = ["Matches", "Wins", "Win Rate %", "Avg Perf", "Min", "Max", 
-                              "KDA", "Kills", "Deaths", "Assists", "Party Games"]
-    detailed_stats = detailed_stats.sort_values("Avg Perf", ascending=False).reset_index()
+    detailed_stats.columns = ["Matches", "Wins", "Win rate %", "Gns. perf", "Min", "Max", 
+                              "KDA", "Kills", "Deaths", "Assists", "Party matches"]
+    detailed_stats = detailed_stats.sort_values("Gns. perf", ascending=False).reset_index()
     
     for idx, row in detailed_stats.iterrows():
         with st.container():
@@ -562,14 +584,14 @@ def show_performance_page(df, selected_players):
                     st.image(img, width=80)
             with col2:
                 st.markdown(f"**{row['player_name']}**")
-                st.text(f"Matches: {int(row['Matches'])} | WR: {row['Win Rate %']:.1f}% | Perf: {row['Avg Perf']:.1f} | KDA: {row['KDA']:.2f}")
-                st.progress(min(row['Win Rate %'] / 100, 1.0))
+                st.text(f"Matches: {int(row['Matches'])} | WR: {row['Win rate %']:.1f}% | Perf: {row['Gns. perf']:.1f} | KDA: {row['KDA']:.2f}")
+                st.progress(min(row['Win rate %'] / 100, 1.0))
             st.markdown("---")
 
 
 def show_role_page(df):
     """Role page"""
-    st.header("🎯 Role Performance")
+    st.header("🎯 Role performance")
     df_with_roles = df[df["role"] != "Unknown"].copy()
     
     if not df_with_roles.empty:
@@ -579,94 +601,134 @@ def show_role_page(df):
             "match_id": "count",
             "kda": "mean"
         }).round(2).reset_index()
-        role_stats.columns = ["Player", "Role", "Avg Performance", "Win Rate %", "Games", "Avg KDA"]
-        role_stats = role_stats[role_stats["Games"] >= 3]
+        role_stats.columns = ["Spiller", "Rolle", "Gns. performance", "Win rate %", "Matches", "Gns. KDA"]
+        role_stats = role_stats[role_stats["Matches"] >= 3]
         
         if not role_stats.empty:
+            # Add position number for sorting
+            def extract_position_number(role):
+                if "Pos" in role:
+                    return int(role.split("Pos ")[1].rstrip(")"))
+                return 999  # Unknown roles go last
+            
+            role_stats["position_number"] = role_stats["Rolle"].apply(extract_position_number)
+            role_stats = role_stats.sort_values("position_number")
+            
+            # Define role order for graphs
+            role_order = ["Carry (Pos 1)", "Mid (Pos 2)", "Offlane (Pos 3)", 
+                         "Soft Support (Pos 4)", "Hard Support (Pos 5)"]
+            
             col1, col2 = st.columns(2)
             with col1:
-                fig = px.bar(role_stats, x="Role", y="Avg Performance", color="Player",
-                           barmode="group", title="Performance by Role", text="Avg Performance")
+                fig = px.bar(role_stats, x="Rolle", y="Gns. performance", color="Spiller",
+                           barmode="group", title="Performance efter rolle", text="Gns. performance",
+                           category_orders={"Rolle": role_order})
                 fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
                 fig.update_layout(xaxis_tickangle=-45)
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                fig = px.bar(role_stats, x="Role", y="Win Rate %", color="Player",
-                           barmode="group", title="Win Rate by Role", text="Win Rate %")
+                fig = px.bar(role_stats, x="Rolle", y="Win rate %", color="Spiller",
+                           barmode="group", title="Win rate efter rolle", text="Win rate %",
+                           category_orders={"Rolle": role_order})
                 fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
                 fig.update_layout(xaxis_tickangle=-45)
                 st.plotly_chart(fig, use_container_width=True)
             
-            st.subheader("⭐ Best Role per Player")
-            best_roles = role_stats.loc[role_stats.groupby("Player")["Avg Performance"].idxmax()]
+            st.subheader("⭐ Bedste role for hver Brohirim spiller")
+            best_roles = role_stats.loc[role_stats.groupby("Spiller")["Gns. performance"].idxmax()]
             for idx, row in best_roles.iterrows():
                 col1, col2 = st.columns([1, 6])
                 with col1:
-                    img = load_player_image(row["Player"])
+                    img = load_player_image(row["Spiller"])
                     if img:
                         img.thumbnail((80, 80))
                         st.image(img, width=80)
                 with col2:
-                    st.markdown(f"**{row['Player']}** - Best as **{row['Role']}**")
-                    st.text(f"Perf: {row['Avg Performance']:.1f} | WR: {row['Win Rate %']:.1f}% | Games: {int(row['Games'])} | KDA: {row['Avg KDA']:.2f}")
+                    st.markdown(f"**{row['Spiller']}** - Bedst som **{row['Rolle']}**")
+                    st.text(f"Perf: {row['Gns. performance']:.1f} | WR: {row['Win rate %']:.1f}% | Matches: {int(row['Matches'])} | KDA: {row['Gns. KDA']:.2f}")
                 st.markdown("---")
         else:
-            st.info("Need 3+ games per role")
+            st.info("Behøver 3+ matches per rolle")
     else:
-        st.info("No role data")
+        st.info("Ingen rolle data")
 
 
 def show_synergy_page(df):
     """Synergy page"""
-    st.header("🤝 Laning Partners")
+    st.header("🤝 Lanes")
     df_with_partners = df[df["lane_partner"].notna()].copy()
     
     if not df_with_partners.empty:
-        laning_stats = df_with_partners.groupby(["player_name", "lane_partner", "lane"]).agg({
+        laning_stats = df_with_partners.groupby(["player_name", "lane_partner", "lane", "role"]).agg({
             "performance_score": "mean",
             "is_victory": lambda x: (x.sum() / len(x) * 100),
             "match_id": "count",
             "kda": "mean"
         }).round(2).reset_index()
-        laning_stats.columns = ["Player", "Partner", "Lane", "Avg Perf", "Win Rate %", "Games", "KDA"]
-        laning_stats = laning_stats[laning_stats["Games"] >= 2].sort_values("Avg Perf", ascending=False)
+        laning_stats.columns = ["Spiller", "Partner", "Lane", "Position", "Gns. perf", "Win rate %", "Matches", "KDA"]
+        laning_stats = laning_stats[laning_stats["Matches"] >= 2].sort_values("Gns. perf", ascending=False)
         
         if not laning_stats.empty:
-            col1, col2 = st.columns(2)
-            with col1:
-                fig = px.bar(laning_stats.head(15), x="Avg Perf", y="Player", color="Partner",
-                           title="Top 15 Partnerships", text="Avg Perf", orientation="h",
-                           hover_data=["Lane", "Games", "Win Rate %"])
-                fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
-                st.plotly_chart(fig, use_container_width=True)
+            # Display table at top
+            st.subheader("🏆 Bedste lane combos")
+            st.dataframe(laning_stats.nlargest(10, "Gns. perf"), use_container_width=True, hide_index=True)
             
-            with col2:
-                fig = px.bar(laning_stats.head(15), x="Win Rate %", y="Player", color="Partner",
-                           title="Top 15 by Win Rate", text="Win Rate %", orientation="h",
-                           hover_data=["Lane", "Games", "Avg Perf"])
-                fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-                st.plotly_chart(fig, use_container_width=True)
+            st.markdown("---")
             
-            st.subheader("🏆 Best Partnerships")
-            st.dataframe(laning_stats.nlargest(10, "Avg Perf"), use_container_width=True, hide_index=True)
+            # Individual graphs for each player
+            st.subheader("📊 Individuelle spillergrafer")
+            
+            unique_players = sorted(laning_stats["Spiller"].unique())
+            
+            for player in unique_players:
+                player_data = laning_stats[laning_stats["Spiller"] == player].copy()
+                
+                if not player_data.empty:
+                    st.markdown(f"### {player}")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        fig = px.bar(player_data.nlargest(10, "Gns. perf"), 
+                                   x="Gns. perf", y="Partner", 
+                                   title=f"{player} - Top partnere (Performance)",
+                                   text="Gns. perf", orientation="h",
+                                   hover_data=["Lane", "Position", "Matches", "Win rate %"],
+                                   color="Gns. perf", color_continuous_scale="RdYlGn")
+                        fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+                        fig.update_layout(showlegend=False, height=400)
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col2:
+                        fig = px.bar(player_data.nlargest(10, "Win rate %"), 
+                                   x="Win rate %", y="Partner",
+                                   title=f"{player} - Top partnere (Win rate)",
+                                   text="Win rate %", orientation="h",
+                                   hover_data=["Lane", "Position", "Matches", "Gns. perf"],
+                                   color="Win rate %", color_continuous_scale="RdYlGn")
+                        fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+                        fig.update_layout(showlegend=False, height=400)
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    st.markdown("---")
         else:
-            st.info("Need 2+ games together")
+            st.info("Behøver 2+ matches sammen")
     else:
-        st.info("No laning partner data")
+        st.info("Ingen laning partner data")
 
 
 def show_match_history_page(df):
     """Match history page"""
-    st.header("🕐 Match History")
+    st.header("📋 Matches")
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        show_count = st.selectbox("Show matches", [10, 20, 50, 100], index=1)
+        show_count = st.selectbox("Vis matches", [10, 20, 50, 100], index=1)
     with col2:
-        filter_result = st.selectbox("Result", ["All", "Wins", "Losses"])
+        filter_result = st.selectbox("Resultat", ["Alle", "Wins", "Losses"])
     with col3:
-        filter_party = st.selectbox("Type", ["All", "Party", "Solo"])
+        filter_party = st.selectbox("Type", ["Alle", "Party", "Solo"])
     
     filtered_df = df.copy()
     if filter_result == "Wins":
@@ -687,12 +749,12 @@ def show_match_history_page(df):
     recent["match_date"] = recent["match_date"].dt.strftime("%Y-%m-%d %H:%M")
     recent["is_victory"] = recent["is_victory"].map({True: "✅ Win", False: "❌ Loss"})
     recent["is_party"] = recent["is_party"].map({True: "👥", False: "🧍"})
-    recent.columns = ["Date", "Player", "Hero", "Role", "Lane", "Result", "Perf", 
-                     "K", "D", "A", "KDA", "Party", "Lane Partner"]
+    recent.columns = ["Dato", "Spiller", "Hero", "Rolle", "Lane", "Resultat", "Perf", 
+                     "K", "D", "A", "KDA", "Party", "Lane partner"]
     
     st.dataframe(recent, use_container_width=True, hide_index=True)
     
-    st.subheader("💾 Export")
+    st.subheader("💾 Eksport")
     csv = df.to_csv(index=False)
     st.download_button(
         label="📥 Download CSV",
