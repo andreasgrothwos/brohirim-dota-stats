@@ -44,12 +44,14 @@ IMAGE_DIR = BASE_DIR / "images"
 
 def load_player_image(player_name):
     """Load player profile picture if it exists"""
-    image_path = IMAGE_DIR / f"{player_name}.jpg"
-    if image_path.exists():
-        try:
-            return Image.open(image_path)
-        except Exception:
-            return None
+    # Try both .jpg and .JPG extensions
+    for ext in ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG']:
+        image_path = IMAGE_DIR / f"{player_name}{ext}"
+        if image_path.exists():
+            try:
+                return Image.open(image_path)
+            except Exception:
+                continue
     return None
 
 
