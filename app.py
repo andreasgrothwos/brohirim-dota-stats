@@ -289,7 +289,7 @@ def load_full_year_data(selected_players):
 
 def display_player_cards(selected_players, df):
     """Display player cards sorted by performance"""
-    st.subheader("👥 Spilleroversigt (sorteret efter performance)")
+    st.subheader("👥 Bros (efter performance)")
     
     player_stats = []
     for player in selected_players:
@@ -340,11 +340,11 @@ def main():
     
     # Sidebar
     with st.sidebar:
-        st.header("⚙️ Indstillinger")
+        st.header("⚙️ Indtillinger")
         
         page = st.selectbox(
             "📄 Vælg side",
-            ["🏠 Overblik", "📊 Performance", "🎯 Rolle & position", "🤝 Lanes", "📋 Matches"]
+            ["🏠 Overblik", "📊 Performance", "🎯 Rolle & position", "🤝 Lanes", "🏆 Seneste kamp", "📋 Matches"]
         )
         
         st.markdown("---")
@@ -382,10 +382,10 @@ def main():
             filter_start_date = None
         
         limit_matches = st.selectbox(
-            "Begræns til seneste N kampe",
-            options=["Alle kampe", "Sidste 10", "Sidste 20", "Sidste 50"],
+            "Begræns til seneste N matches",
+            options=["Alle matches", "Sidste 10", "Sidste 20", "Sidste 50"],
             index=0,
-            help="Seneste N kampe per spiller"
+            help="Seneste N matches per spiller"
         )
         
         st.markdown("---")
@@ -403,7 +403,7 @@ def main():
         st.caption(f"⏰ {datetime.now().strftime('%H:%M:%S')}")
     
     if not selected_players:
-        st.warning("Vælg mindst én spiller")
+        st.warning("Vælg mindst én Brohirim")
         return
     
     # Load data once
@@ -420,7 +420,7 @@ def main():
     if filter_start_date:
         df = df[df["match_date"] >= filter_start_date]
     
-    if limit_matches != "Alle kampe":
+    if limit_matches != "Alle matches":
         n = int(limit_matches.split()[-1])
         df = df.sort_values("match_date", ascending=False).groupby("player_name").head(n).reset_index(drop=True)
     
@@ -439,6 +439,8 @@ def main():
         show_role_page(df)
     elif page == "🤝 Lanes":
         show_synergy_page(df)
+    elif page == "🏆 Seneste kamp":
+        show_latest_match_page(df, selected_players)
     elif page == "📋 Matches":
         show_match_history_page(df)
 
@@ -559,7 +561,7 @@ def show_performance_page(df, selected_players):
     fig6.update_traces(line=dict(color='#636EFA', width=3))
     st.plotly_chart(fig6, use_container_width=True)
     
-    st.subheader("📋 Detaljerede statistikker")
+    st.subheader("📋 Detaljerede stats")
     detailed_stats = df.groupby("player_name").agg({
         "match_id": "count",
         "is_victory": ["sum", lambda x: (x.sum() / len(x) * 100)],
@@ -591,7 +593,7 @@ def show_performance_page(df, selected_players):
 
 def show_role_page(df):
     """Role page"""
-    st.header("🎯 Role performance")
+    st.header("🎯 Rolle performance")
     df_with_roles = df[df["role"] != "Unknown"].copy()
     
     if not df_with_roles.empty:
@@ -635,7 +637,7 @@ def show_role_page(df):
                 fig.update_layout(xaxis_tickangle=-45)
                 st.plotly_chart(fig, use_container_width=True)
             
-            st.subheader("⭐ Bedste role for hver Brohirim spiller")
+            st.subheader("⭐ Bedste rolle per spiller")
             best_roles = role_stats.loc[role_stats.groupby("Spiller")["Gns. performance"].idxmax()]
             for idx, row in best_roles.iterrows():
                 col1, col2 = st.columns([1, 6])
@@ -671,13 +673,13 @@ def show_synergy_page(df):
         
         if not laning_stats.empty:
             # Display table at top
-            st.subheader("🏆 Bedste lane combos")
+            st.subheader("🏆 Bedste lanes")
             st.dataframe(laning_stats.nlargest(10, "Gns. perf"), use_container_width=True, hide_index=True)
             
             st.markdown("---")
             
             # Individual graphs for each player
-            st.subheader("📊 Individuelle spillergrafer")
+            st.subheader("📊 Individuelle synergies")
             
             unique_players = sorted(laning_stats["Spiller"].unique())
             
@@ -716,6 +718,273 @@ def show_synergy_page(df):
             st.info("Behøver 2+ matches sammen")
     else:
         st.info("Ingen laning partner data")
+
+
+def show_latest_match_page(df, selected_players):
+    """Latest match analysis page with MVP and bottom player awards"""
+    st.header("🏆 Seneste match")
+    
+    # Find the latest match that has multiple Brohirim players
+    if df.empty:
+        st.warning("Ingen data tilgængelig")
+        return
+    
+    # Group by match to find matches with multiple Brohirim players
+    match_groups = df.groupby("match_id").agg({
+        "player_name": lambda x: list(x),
+        "match_date": "first",
+        "is_victory": "first",
+        "duration_min": "first"
+    }).reset_index()
+    
+    # Filter for matches with 2+ Brohirim players
+    brohirim_matches = match_groups[match_groups["player_name"].apply(len) >= 2]
+    
+    if brohirim_matches.empty:
+        st.warning("Ingen fælles Brohirim kampe fundet i den valgte periode")
+        st.info("Prøv at udvide tidsperioden i sidebaren")
+        return
+    
+    # Sort by date and get the LATEST match (most recent first)
+    brohirim_matches = brohirim_matches.sort_values("match_date", ascending=False)
+    
+    # Get the latest Brohirim match
+    latest_match = brohirim_matches.iloc[0]
+    match_id = latest_match["match_id"]
+    match_date = latest_match["match_date"]
+    is_victory = latest_match["is_victory"]
+    match_result = "✅ Easy win" if is_victory else "❌ CHAT WIN"
+    duration = latest_match["duration_min"]
+    
+    # Get all players from this match
+    match_data = df[df["match_id"] == match_id].copy()
+    
+    # Display match header
+    st.markdown(f"### {match_result}")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Dato", match_date.strftime("%Y-%m-%d %H:%M"))
+    with col2:
+        st.metric("Varighed", f"{duration:.1f} min")
+    with col3:
+        st.metric("Brohirim spillere", len(match_data))
+    
+    st.markdown("---")
+    
+    # Calculate comprehensive scores for MVP/Bottom ranking
+    match_data["mvp_score"] = (
+        match_data["performance_score"] * 0.4 +  # Performance is key
+        match_data["kda"] * 10 +  # KDA weighted
+        (match_data["kills"] + match_data["assists"]) * 2 -  # Kill participation
+        match_data["deaths"] * 3  # Deaths penalty
+    )
+    
+    match_data_sorted = match_data.sort_values("mvp_score", ascending=False)
+    
+    # MVP and Bottom player
+    mvp = match_data_sorted.iloc[0]
+    bottom = match_data_sorted.iloc[-1]
+    
+    # If victory: show MVP on top, Bottom on bottom
+    # If loss: show Bottom on top, MVP on bottom
+    
+    if is_victory:
+        # Victory: MVP first
+        st.subheader("🥇 Match MVP")
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            img = load_player_image(mvp["player_name"])
+            if img:
+                st.image(img, use_container_width=True)
+        with col2:
+            st.markdown(f"## {mvp['player_name']}")
+            st.markdown(f"**Hero:** {mvp['hero']} | **Rolle:** {mvp['role']}")
+            
+            metric_cols = st.columns(4)
+            with metric_cols[0]:
+                st.metric("Performance", f"{mvp['performance_score']:.1f}")
+            with metric_cols[1]:
+                st.metric("KDA", f"{mvp['kda']:.2f}")
+            with metric_cols[2]:
+                st.metric("K/D/A", f"{mvp['kills']}/{mvp['deaths']}/{mvp['assists']}")
+            with metric_cols[3]:
+                st.metric("Level", int(mvp['level']))
+        
+        st.markdown("**MVP Begrundelse:**")
+        reasons = []
+        if mvp['performance_score'] >= 60:
+            reasons.append(f"🌟 Exceptionel performance score ({mvp['performance_score']:.1f})")
+        elif mvp['performance_score'] >= 50:
+            reasons.append(f"⭐ Stærk performance score ({mvp['performance_score']:.1f})")
+        
+        if mvp['kda'] >= 5:
+            reasons.append(f"💀 Fremragende KDA ratio ({mvp['kda']:.2f})")
+        elif mvp['kda'] >= 3:
+            reasons.append(f"✨ God KDA ratio ({mvp['kda']:.2f})")
+        
+        if mvp['kills'] + mvp['assists'] >= 20:
+            reasons.append(f"🎯 Høj kill participation ({mvp['kills']} kills, {mvp['assists']} assists)")
+        
+        if mvp['deaths'] <= 3:
+            reasons.append(f"🛡️ Få deaths ({mvp['deaths']})")
+        
+        if not reasons:
+            reasons.append(f"Bedste præstation i kampen")
+        
+        for reason in reasons:
+            st.markdown(f"- {reason}")
+        
+        st.markdown("---")
+        
+        # Bottom player
+        st.subheader("💩 Bundplacering")
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            img = load_player_image(bottom["player_name"])
+            if img:
+                st.image(img, use_container_width=True)
+        with col2:
+            st.markdown(f"## {bottom['player_name']}")
+            st.markdown(f"**Hero:** {bottom['hero']} | **Rolle:** {bottom['role']}")
+            
+            metric_cols = st.columns(4)
+            with metric_cols[0]:
+                st.metric("Performance", f"{bottom['performance_score']:.1f}")
+            with metric_cols[1]:
+                st.metric("KDA", f"{bottom['kda']:.2f}")
+            with metric_cols[2]:
+                st.metric("K/D/A", f"{bottom['kills']}/{bottom['deaths']}/{bottom['assists']}")
+            with metric_cols[3]:
+                st.metric("Level", int(bottom['level']))
+        
+        st.markdown("---")
+    
+    else:
+        # Loss: Bottom first
+        st.subheader("💩 Bundplacering")
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            img = load_player_image(bottom["player_name"])
+            if img:
+                st.image(img, use_container_width=True)
+        with col2:
+            st.markdown(f"## {bottom['player_name']}")
+            st.markdown(f"**Hero:** {bottom['hero']} | **Rolle:** {bottom['role']}")
+            
+            metric_cols = st.columns(4)
+            with metric_cols[0]:
+                st.metric("Performance", f"{bottom['performance_score']:.1f}")
+            with metric_cols[1]:
+                st.metric("KDA", f"{bottom['kda']:.2f}")
+            with metric_cols[2]:
+                st.metric("K/D/A", f"{bottom['kills']}/{bottom['deaths']}/{bottom['assists']}")
+            with metric_cols[3]:
+                st.metric("Level", int(bottom['level']))
+        
+        st.markdown("---")
+        
+        # MVP player
+        st.subheader("🥇 Match MVP")
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            img = load_player_image(mvp["player_name"])
+            if img:
+                st.image(img, use_container_width=True)
+        with col2:
+            st.markdown(f"## {mvp['player_name']}")
+            st.markdown(f"**Hero:** {mvp['hero']} | **Rolle:** {mvp['role']}")
+            
+            metric_cols = st.columns(4)
+            with metric_cols[0]:
+                st.metric("Performance", f"{mvp['performance_score']:.1f}")
+            with metric_cols[1]:
+                st.metric("KDA", f"{mvp['kda']:.2f}")
+            with metric_cols[2]:
+                st.metric("K/D/A", f"{mvp['kills']}/{mvp['deaths']}/{mvp['assists']}")
+            with metric_cols[3]:
+                st.metric("Level", int(mvp['level']))
+        
+        st.markdown("**MVP Begrundelse:**")
+        reasons = []
+        if mvp['performance_score'] >= 60:
+            reasons.append(f"🌟 Exceptionel performance score ({mvp['performance_score']:.1f})")
+        elif mvp['performance_score'] >= 50:
+            reasons.append(f"⭐ Stærk performance score ({mvp['performance_score']:.1f})")
+        
+        if mvp['kda'] >= 5:
+            reasons.append(f"💀 Fremragende KDA ratio ({mvp['kda']:.2f})")
+        elif mvp['kda'] >= 3:
+            reasons.append(f"✨ God KDA ratio ({mvp['kda']:.2f})")
+        
+        if mvp['kills'] + mvp['assists'] >= 20:
+            reasons.append(f"🎯 Høj kill participation ({mvp['kills']} kills, {mvp['assists']} assists)")
+        
+        if mvp['deaths'] <= 3:
+            reasons.append(f"🛡️ Få deaths ({mvp['deaths']})")
+        
+        if not reasons:
+            reasons.append(f"Bedste præstation i kampen")
+        
+        for reason in reasons:
+            st.markdown(f"- {reason}")
+        
+        st.markdown("---")
+    
+    # Team overview
+    st.subheader("📊 Fuld holdoversigt")
+    
+    # Create ranking table
+    ranking_data = match_data_sorted[["player_name", "hero", "role", "performance_score", 
+                                       "kills", "deaths", "assists", "kda", "level"]].copy()
+    ranking_data["rank"] = range(1, len(ranking_data) + 1)
+    ranking_data["medal"] = ranking_data["rank"].apply(
+        lambda x: "🥇" if x == 1 else "🥈" if x == 2 else "🥉" if x == 3 else "💩" if x == len(ranking_data) else ""
+    )
+    
+    ranking_data = ranking_data[["medal", "rank", "player_name", "hero", "role", 
+                                 "performance_score", "kda", "kills", "deaths", "assists", "level"]]
+    ranking_data.columns = ["", "Rank", "Spiller", "Hero", "Rolle", "Performance", 
+                            "KDA", "K", "D", "A", "Lvl"]
+    
+    st.dataframe(ranking_data, use_container_width=True, hide_index=True)
+    
+    # Performance comparison chart
+    st.subheader("📈 Performance sammenligning")
+    fig = px.bar(match_data_sorted, x="player_name", y="performance_score",
+                 title="Performance Score",
+                 color="performance_score",
+                 color_continuous_scale="RdYlGn",
+                 text="performance_score")
+    fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+    fig.update_layout(showlegend=False, xaxis_title="Spiller", yaxis_title="Performance Score")
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # KDA comparison
+    col1, col2 = st.columns(2)
+    with col1:
+        fig = px.bar(match_data_sorted, x="player_name", y="kda",
+                     title="KDA Ratio",
+                     color="kda",
+                     color_continuous_scale="RdYlGn",
+                     text="kda")
+        fig.update_traces(texttemplate='%{text:.2f}', textposition='outside')
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        # Create kills/deaths/assists breakdown
+        breakdown_data = []
+        for _, row in match_data_sorted.iterrows():
+            breakdown_data.append({"Spiller": row["player_name"], "Type": "Kills", "Antal": row["kills"]})
+            breakdown_data.append({"Spiller": row["player_name"], "Type": "Deaths", "Antal": row["deaths"]})
+            breakdown_data.append({"Spiller": row["player_name"], "Type": "Assists", "Antal": row["assists"]})
+        
+        breakdown_df = pd.DataFrame(breakdown_data)
+        fig = px.bar(breakdown_df, x="Spiller", y="Antal", color="Type",
+                     title="Kills / Deaths / Assists",
+                     barmode="group",
+                     color_discrete_map={"Kills": "#2ecc71", "Deaths": "#e74c3c", "Assists": "#3498db"})
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def show_match_history_page(df):
