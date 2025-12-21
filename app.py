@@ -60,7 +60,7 @@ def fetch_all_matches_for_player(steam_id, player_name, cutoff_date):
     all_matches = []
     skip = 0
     batch_size = 100
-    max_batches = 10  # Max 1000 matches total
+    max_batches = 5  # Reduced to 5 batches = 500 matches max to avoid rate limiting
     
     query = """
     query($steamAccountId: Long!, $take: Int!, $skip: Int!) {
@@ -110,15 +110,17 @@ def fetch_all_matches_for_player(steam_id, player_name, cutoff_date):
                 "https://api.stratz.com/graphql",
                 json={"query": query, "variables": variables},
                 headers=headers,
-                timeout=15
+                timeout=20
             )
             
             if response.status_code != 200:
+                st.warning(f"API returned status {response.status_code} for {player_name}")
                 break
             
             data = response.json()
             
             if "errors" in data:
+                st.error(f"API errors for {player_name}: {data['errors']}")
                 break
             
             matches = data.get("data", {}).get("player", {}).get("matches")
@@ -143,9 +145,10 @@ def fetch_all_matches_for_player(steam_id, player_name, cutoff_date):
                 break
             
             skip += batch_size
-            time.sleep(0.3)  # Rate limiting
+            time.sleep(0.5)  # Rate limiting between batches
             
-        except Exception:
+        except Exception as e:
+            st.error(f"Exception fetching {player_name}: {str(e)}")
             break
     
     return all_matches
@@ -251,15 +254,22 @@ def load_full_year_data(selected_players):
         status_text.text(f"📥 Fetching matches for {player_name}...")
         steam_id = PLAYERS[player_name]
         
-        matches = fetch_all_matches_for_player(steam_id, player_name, cutoff_date)
-        
-        if matches:
-            processed = process_matches(matches, steam_id, player_name, all_steam_ids)
-            all_data.extend(processed)
-            status_text.text(f"✅ {len(processed)} matches for {player_name}")
+        try:
+            matches = fetch_all_matches_for_player(steam_id, player_name, cutoff_date)
+            
+            if matches:
+                processed = process_matches(matches, steam_id, player_name, all_steam_ids)
+                all_data.extend(processed)
+                status_text.text(f"✅ {len(processed)} matches for {player_name}")
+            else:
+                status_text.text(f"⚠️ No matches found for {player_name}")
+                st.warning(f"Could not load matches for {player_name}. Check API key or try again.")
+        except Exception as e:
+            st.error(f"Error loading {player_name}: {str(e)}")
+            status_text.text(f"❌ Error for {player_name}")
         
         progress_bar.progress((idx + 1) / len(selected_players))
-        time.sleep(0.5)
+        time.sleep(1)  # Longer delay between players to avoid rate limiting
     
     status_text.empty()
     progress_bar.empty()
@@ -267,7 +277,10 @@ def load_full_year_data(selected_players):
     df = pd.DataFrame(all_data)
     
     if not df.empty:
-        st.success(f"✅ Loaded {len(df)} matches! Cached for 2 hours.")
+        st.success(f"✅ Loaded {len(df)} matches from {len(df['player_name'].unique())} players! Cached for 2 hours.")
+    else:
+        st.error("⚠️ No data was loaded. This could be due to:")
+        st.info("1. API rate limiting - wait a few minutes and click 'Refresh Data'\n2. API key issues\n3. No matches in the last year")
     
     return df
 
