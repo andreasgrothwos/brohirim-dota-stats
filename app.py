@@ -28,6 +28,7 @@ PLAYERS = {
     "Casper": 143488868,
     "Ahle": 4222575,
     "Nicolai": 74973595,
+    "Patrick": 95669087
 }
 
 # API Configuration
