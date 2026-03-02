@@ -10,6 +10,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
+import json
+import shutil
 from PIL import Image
 from pathlib import Path
 
@@ -42,6 +44,7 @@ except (FileNotFoundError, KeyError):
 
 BASE_DIR = Path.cwd()
 IMAGE_DIR = BASE_DIR / "images"
+CACHE_DIR = BASE_DIR / ".match_cache"
 
 def load_player_image(player_name):
     """Load player profile picture if it exists"""
@@ -56,15 +59,40 @@ def load_player_image(player_name):
     return None
 
 
-@st.cache_data(ttl=3600)
+def _load_disk_cache(player_name):
+    """Load raw match data from disk cache. Returns list of match dicts."""
+    cache_file = CACHE_DIR / f"{player_name}.json"
+    if cache_file.exists():
+        try:
+            with open(cache_file, "r") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+
+def _save_disk_cache(player_name, matches):
+    """Persist raw match data to disk cache."""
+    CACHE_DIR.mkdir(exist_ok=True)
+    cache_file = CACHE_DIR / f"{player_name}.json"
+    try:
+        with open(cache_file, "w") as f:
+            json.dump(matches, f)
+    except Exception as e:
+        st.warning(f"Kunne ikke gemme cache for {player_name}: {e}")
+
+
 def fetch_all_matches_for_player(steam_id, player_name, cutoff_date):
-    """Fetch ALL matches since cutoff_date for a player (using batching)"""
-    
-    all_matches = []
-    skip = 0
-    batch_size = 100
-    max_batches = 5  # Reduced to 5 batches = 500 matches max to avoid rate limiting
-    
+    """
+    Fetch matches for a player using a persistent disk cache.
+    Loads historical matches from disk and only fetches new ones from the API.
+    """
+    cutoff_ts = int(cutoff_date.timestamp())
+
+    # Load existing cached matches from disk
+    cached_matches = _load_disk_cache(player_name)
+    cached_ids = {m["id"] for m in cached_matches}
+
     query = """
     query($steamAccountId: Long!, $take: Int!, $skip: Int!) {
       player(steamAccountId: $steamAccountId) {
@@ -94,20 +122,25 @@ def fetch_all_matches_for_player(steam_id, player_name, cutoff_date):
       }
     }
     """
-    
+
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "User-Agent": "STRATZ_API",
         "Content-Type": "application/json"
     }
-    
+
+    new_matches = []
+    skip = 0
+    batch_size = 100
+    max_batches = 10  # Allow more batches; early exit hits for cached players
+
     for batch_num in range(max_batches):
         variables = {
             "steamAccountId": steam_id,
             "take": batch_size,
             "skip": skip
         }
-        
+
         try:
             response = requests.post(
                 "https://api.stratz.com/graphql",
@@ -115,46 +148,56 @@ def fetch_all_matches_for_player(steam_id, player_name, cutoff_date):
                 headers=headers,
                 timeout=20
             )
-            
+
             if response.status_code != 200:
                 st.warning(f"API returned status {response.status_code} for {player_name}")
                 break
-            
+
             data = response.json()
-            
+
             if "errors" in data:
                 st.error(f"API errors for {player_name}: {data['errors']}")
                 break
-            
+
             matches = data.get("data", {}).get("player", {}).get("matches")
-            
+
             if not matches or len(matches) == 0:
                 break
-            
-            # Check if oldest match in batch is before cutoff
-            oldest_match_time = min(m["startDateTime"] for m in matches)
-            oldest_match_date = datetime.fromtimestamp(oldest_match_time)
-            
-            # Filter matches within date range
-            valid_matches = [m for m in matches if datetime.fromtimestamp(m["startDateTime"]) >= cutoff_date]
-            all_matches.extend(valid_matches)
-            
-            # Stop if oldest match is before cutoff
-            if oldest_match_date < cutoff_date:
+
+            reached_cached = False
+            for match in matches:
+                if match["id"] in cached_ids:
+                    # We've reached matches already in cache – stop fetching
+                    reached_cached = True
+                    break
+                if match["startDateTime"] >= cutoff_ts:
+                    new_matches.append(match)
+
+            if reached_cached:
                 break
-            
-            # Stop if fewer matches than requested
+
+            # Stop if oldest match in batch is before our cutoff
+            if min(m["startDateTime"] for m in matches) < cutoff_ts:
+                break
+
             if len(matches) < batch_size:
                 break
-            
+
             skip += batch_size
             time.sleep(0.5)  # Rate limiting between batches
-            
+
         except Exception as e:
             st.error(f"Exception fetching {player_name}: {str(e)}")
             break
-    
-    return all_matches
+
+    if new_matches:
+        # Merge new matches with cached ones, keeping only matches within date range
+        all_matches = new_matches + [m for m in cached_matches if m["startDateTime"] >= cutoff_ts]
+        _save_disk_cache(player_name, all_matches)
+        return all_matches, len(new_matches)
+
+    # Nothing new – return from disk cache (filtered to date range)
+    return [m for m in cached_matches if m["startDateTime"] >= cutoff_ts], 0
 
 
 def process_matches(matches, steam_id, player_name, all_steam_ids):
@@ -242,49 +285,54 @@ def process_matches(matches, steam_id, player_name, all_steam_ids):
     return processed_data
 
 
-@st.cache_data(ttl=7200)  # Cache for 2 hours
+@st.cache_data(ttl=7200)  # Cache processed DataFrame for 2 hours in-memory
 def load_full_year_data(selected_players):
-    """Load ALL matches from last year - ONE TIME ONLY"""
-    
+    """Load ALL matches from last year – uses disk cache, only fetches new matches from API"""
+
     cutoff_date = datetime.now() - timedelta(days=365)
     all_data = []
     all_steam_ids = [PLAYERS[p] for p in selected_players]
-    
+
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
+    total_new = 0
+
     for idx, player_name in enumerate(selected_players):
-        status_text.text(f"📥 Fetching matches for {player_name}...")
+        status_text.text(f"📥 Henter matches for {player_name}...")
         steam_id = PLAYERS[player_name]
-        
+
         try:
-            matches = fetch_all_matches_for_player(steam_id, player_name, cutoff_date)
-            
+            matches, new_count = fetch_all_matches_for_player(steam_id, player_name, cutoff_date)
+            total_new += new_count
+
             if matches:
                 processed = process_matches(matches, steam_id, player_name, all_steam_ids)
                 all_data.extend(processed)
-                status_text.text(f"✅ {len(processed)} matches for {player_name}")
+                if new_count > 0:
+                    status_text.text(f"✅ {len(processed)} matches for {player_name} ({new_count} nye)")
+                else:
+                    status_text.text(f"✅ {len(processed)} matches for {player_name} (fra cache)")
             else:
-                status_text.text(f"⚠️ No matches found for {player_name}")
-                st.warning(f"Could not load matches for {player_name}. Check API key or try again.")
+                status_text.text(f"⚠️ Ingen matches fundet for {player_name}")
+                st.warning(f"Kunne ikke indlæse matches for {player_name}. Tjek API-nøgle eller prøv igen.")
         except Exception as e:
-            st.error(f"Error loading {player_name}: {str(e)}")
-            status_text.text(f"❌ Error for {player_name}")
-        
+            st.error(f"Fejl ved indlæsning af {player_name}: {str(e)}")
+            status_text.text(f"❌ Fejl for {player_name}")
+
         progress_bar.progress((idx + 1) / len(selected_players))
-        time.sleep(1)  # Longer delay between players to avoid rate limiting
-    
+
     status_text.empty()
     progress_bar.empty()
-    
+
     df = pd.DataFrame(all_data)
-    
+
     if not df.empty:
-        st.success(f"✅ Loaded {len(df)} matches from {len(df['player_name'].unique())} players! Cached for 2 hours.")
+        cache_note = f" ({total_new} nye fra API)" if total_new > 0 else " (alt fra disk-cache)"
+        st.success(f"✅ {len(df)} matches fra {len(df['player_name'].unique())} spillere{cache_note}. Cachet i 2 timer.")
     else:
-        st.error("⚠️ No data was loaded. This could be due to:")
-        st.info("1. API rate limiting - wait a few minutes and click 'Refresh Data'\n2. API key issues\n3. No matches in the last year")
-    
+        st.error("⚠️ Ingen data indlæst. Dette kan skyldes:")
+        st.info("1. API rate limiting – vent lidt og klik 'Opdater data'\n2. API-nøgle problemer\n3. Ingen matches det seneste år")
+
     return df
 
 
@@ -390,17 +438,20 @@ def main():
         )
         
         st.markdown("---")
-        if st.button("🔄 Opdater data", use_container_width=True):
+        if st.button("🔄 Opdater data", use_container_width=True,
+                     help="Henter nye matches fra API (gemte historiske matches bevares)"):
             st.cache_data.clear()
             st.rerun()
-        
-        if st.button("⚡ Quick refresh (seneste timer)", use_container_width=True, help="Indlæser kun matches fra de seneste 3 timer"):
-            # Clear only the fetch cache to get fresh recent data
-            fetch_all_matches_for_player.clear()
+
+        if st.button("🗑️ Nulstil disk cache", use_container_width=True,
+                     help="Sletter alle gemte matches og henter alt forfra fra API"):
+            if CACHE_DIR.exists():
+                shutil.rmtree(CACHE_DIR)
+            st.cache_data.clear()
             st.rerun()
-        
+
         st.markdown("---")
-        st.caption("💡 Data indlæst én gang, cached 2 timer")
+        st.caption("💡 Historiske matches gemmes på disk – kun nye hentes fra API")
         st.caption(f"⏰ {datetime.now().strftime('%H:%M:%S')}")
     
     if not selected_players:
