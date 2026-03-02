@@ -337,47 +337,75 @@ def load_full_year_data(selected_players):
 
 
 def display_player_cards(selected_players, df):
-    """Display player cards sorted by performance"""
+    """Display player cards sorted by performance, with form indicator and current streak"""
     st.subheader("👥 Bros (efter performance)")
-    
+
     player_stats = []
     for player in selected_players:
-        player_data = df[df["player_name"] == player]
-        if not player_data.empty:
-            matches = len(player_data)
-            win_rate = (player_data["is_victory"].sum() / matches * 100)
-            avg_perf = player_data["performance_score"].mean()
-            player_stats.append({
-                "name": player,
-                "matches": matches,
-                "win_rate": win_rate,
-                "avg_perf": avg_perf
-            })
-    
+        player_data = df[df["player_name"] == player].sort_values("match_date", ascending=False)
+        if player_data.empty:
+            continue
+
+        matches = len(player_data)
+        win_rate = player_data["is_victory"].sum() / matches * 100
+        avg_perf = player_data["performance_score"].mean()
+
+        # Form: last 5 games vs overall average within current filter
+        if matches >= 5:
+            last5_perf = player_data.head(5)["performance_score"].mean()
+            if last5_perf > avg_perf * 1.1:
+                form = "🔥"
+            elif last5_perf < avg_perf * 0.9:
+                form = "📉"
+            else:
+                form = "😐"
+        else:
+            form = ""
+
+        # Current streak (consecutive wins or losses from most recent)
+        streak_count, streak_type = 0, None
+        for _, row in player_data.iterrows():
+            if streak_type is None:
+                streak_type = "win" if row["is_victory"] else "loss"
+                streak_count = 1
+            elif (row["is_victory"] and streak_type == "win") or (not row["is_victory"] and streak_type == "loss"):
+                streak_count += 1
+            else:
+                break
+
+        player_stats.append({
+            "name": player,
+            "matches": matches,
+            "win_rate": win_rate,
+            "avg_perf": avg_perf,
+            "form": form,
+            "streak_count": streak_count,
+            "streak_type": streak_type,
+        })
+
     player_stats.sort(key=lambda x: x["avg_perf"], reverse=True)
-    
+    medals = ["🥇", "🥈", "🥉"]
     cols = st.columns(len(player_stats))
-    
+
     for idx, player_info in enumerate(player_stats):
         player = player_info["name"]
         with cols[idx]:
             img = load_player_image(player)
             if img:
                 st.image(img, use_container_width=True)
-            
-            if idx == 0:
-                st.markdown(f"### 🥇 {player}")
-            elif idx == 1:
-                st.markdown(f"### 🥈 {player}")
-            elif idx == 2:
-                st.markdown(f"### 🥉 {player}")
-            else:
-                st.markdown(f"### {player}")
-            
+
+            medal = medals[idx] if idx < 3 else ""
+            st.markdown(f"### {medal} {player} {player_info['form']}")
+
             st.metric("Matches", player_info["matches"])
             st.metric("Win rate", f"{player_info['win_rate']:.1f}%")
             st.metric("Gns. performance", f"{player_info['avg_perf']:.1f}")
-    
+
+            if player_info["streak_type"] == "win" and player_info["streak_count"] >= 2:
+                st.success(f"🔥 {player_info['streak_count']} sejre i træk")
+            elif player_info["streak_type"] == "loss" and player_info["streak_count"] >= 2:
+                st.error(f"💀 {player_info['streak_count']} tab i træk")
+
     st.markdown("---")
 
 
@@ -393,7 +421,7 @@ def main():
         
         page = st.selectbox(
             "📄 Vælg side",
-            ["🏠 Overblik", "📊 Performance", "🎯 Rolle & position", "🤝 Lanes", "📋 Matches"]
+            ["🏠 Overblik", "📊 Performance", "🎯 Rolle & position", "🤝 Lanes", "🦸 Heroes", "📅 Aktivitet", "📋 Matches"]
         )
         
         st.markdown("---")
@@ -441,6 +469,7 @@ def main():
         if st.button("🔄 Opdater data", use_container_width=True,
                      help="Henter nye matches fra API (gemte historiske matches bevares)"):
             st.cache_data.clear()
+            st.session_state.data_loaded_at = datetime.now()
             st.rerun()
 
         if st.button("🗑️ Nulstil disk cache", use_container_width=True,
@@ -448,6 +477,7 @@ def main():
             if CACHE_DIR.exists():
                 shutil.rmtree(CACHE_DIR)
             st.cache_data.clear()
+            st.session_state.data_loaded_at = datetime.now()
             st.rerun()
 
         st.markdown("---")
@@ -461,27 +491,40 @@ def main():
     # Load data once
     with st.spinner("🔄 Indlæser data fra det sidste år..."):
         df_full = load_full_year_data(selected_players)
-    
+
+    if "data_loaded_at" not in st.session_state:
+        st.session_state.data_loaded_at = datetime.now()
+
     if df_full.empty:
         st.error("Ingen data tilgængelig")
         return
-    
+
     # Filter in memory - NO API CALLS
     df = df_full.copy()
-    
+
     if filter_start_date:
         df = df[df["match_date"] >= filter_start_date]
-    
+
     if limit_matches != "Alle matches":
         n = int(limit_matches.split()[-1])
         df = df.sort_values("match_date", ascending=False).groupby("player_name").head(n).reset_index(drop=True)
-    
+
     if df.empty:
         st.warning("Ingen matches med nuværende filtre")
         return
-    
-    st.info(f"📊 {len(df)} matches | {df['match_date'].min().date()} til {df['match_date'].max().date()}")
-    
+
+    # Update info bar
+    mins_ago = int((datetime.now() - st.session_state.data_loaded_at).total_seconds() / 60)
+    info_col, btn_col = st.columns([6, 1])
+    with info_col:
+        label = "frisk indlæst" if mins_ago == 0 else f"indlæst for {mins_ago} min. siden"
+        st.caption(f"🕐 Data {label} · {len(df)} matches · {df['match_date'].min().date()} → {df['match_date'].max().date()}")
+    with btn_col:
+        if st.button("⚡ Opdater", help="Henter nye matches fra API"):
+            st.cache_data.clear()
+            st.session_state.data_loaded_at = datetime.now()
+            st.rerun()
+
     # Route to pages
     if page == "🏠 Overblik":
         show_overview_page(df, selected_players)
@@ -491,6 +534,10 @@ def main():
         show_role_page(df)
     elif page == "🤝 Lanes":
         show_synergy_page(df)
+    elif page == "🦸 Heroes":
+        show_hero_page(df)
+    elif page == "📅 Aktivitet":
+        show_activity_page(df)
     elif page == "📋 Matches":
         show_match_history_page(df)
 
@@ -614,6 +661,39 @@ def show_performance_page(df, selected_players):
     fig6.update_traces(line=dict(color='#636EFA', width=3))
     st.plotly_chart(fig6, use_container_width=True)
     
+    st.markdown("---")
+    st.subheader("⏱️ Comeback-meter")
+    df_cm = df.copy()
+    df_cm["Varighed"] = pd.cut(
+        df_cm["duration_min"],
+        bins=[0, 25, 35, 45, 200],
+        labels=["< 25 min", "25–35 min", "35–45 min", "> 45 min"]
+    )
+    duration_stats = df_cm.groupby("Varighed", observed=True).agg(
+        Kampe=("match_id", "count"),
+        Win_rate=("is_victory", lambda x: round(x.sum() / len(x) * 100, 1))
+    ).reset_index()
+    duration_stats.columns = ["Varighed", "Kampe", "Win rate %"]
+
+    col1, col2 = st.columns(2)
+    with col1:
+        fig = px.bar(duration_stats, x="Varighed", y="Win rate %",
+                     title="Win rate efter kampvarighed",
+                     color="Win rate %", color_continuous_scale="RdYlGn",
+                     text="Win rate %")
+        fig.update_traces(texttemplate='%{text:.0f}%', textposition='outside')
+        fig.add_hline(y=50, line_dash="dash", line_color="gray", annotation_text="50%")
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        fig = px.bar(duration_stats, x="Varighed", y="Kampe",
+                     title="Antal kampe per varighed",
+                     text="Kampe")
+        fig.update_traces(texttemplate='%{text}', textposition='outside')
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
     st.subheader("📋 Detaljerede stats")
     detailed_stats = df.groupby("player_name").agg({
         "match_id": "count",
@@ -1040,10 +1120,147 @@ def show_latest_match_page(df, selected_players):
         st.plotly_chart(fig, use_container_width=True)
 
 
+def show_hero_page(df):
+    """Hero statistics page"""
+    st.header("🦸 Heroes")
+
+    hero_stats = df.groupby("hero").agg(
+        Matches=("match_id", "count"),
+        Win_rate=("is_victory", lambda x: round(x.sum() / len(x) * 100, 1)),
+        Avg_perf=("performance_score", lambda x: round(x.mean(), 1)),
+        Avg_kda=("kda", lambda x: round(x.mean(), 2)),
+    ).reset_index()
+    hero_stats = hero_stats[hero_stats["Matches"] >= 2]
+    hero_stats.columns = ["Hero", "Matches", "Win rate %", "Gns. perf", "Gns. KDA"]
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("🏆 Bedste win rate (min 2 matches)")
+        top_wr = hero_stats.nlargest(10, "Win rate %")
+        fig = px.bar(top_wr, x="Win rate %", y="Hero", orientation="h",
+                     color="Win rate %", color_continuous_scale="RdYlGn",
+                     text="Win rate %", hover_data=["Matches", "Gns. perf"])
+        fig.update_traces(texttemplate='%{text:.0f}%', textposition='outside')
+        fig.update_layout(showlegend=False, height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        st.subheader("🎯 Mest spillede")
+        top_played = hero_stats.nlargest(10, "Matches")
+        fig = px.bar(top_played, x="Matches", y="Hero", orientation="h",
+                     color="Win rate %", color_continuous_scale="RdYlGn",
+                     text="Matches", hover_data=["Win rate %", "Gns. perf"])
+        fig.update_traces(texttemplate='%{text}', textposition='outside')
+        fig.update_layout(showlegend=False, height=400)
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("👤 Per spiller (min 2 matches)")
+
+    player_hero = df.groupby(["player_name", "hero"]).agg(
+        Matches=("match_id", "count"),
+        Win_rate=("is_victory", lambda x: round(x.sum() / len(x) * 100, 1)),
+        Avg_perf=("performance_score", lambda x: round(x.mean(), 1)),
+        Avg_kda=("kda", lambda x: round(x.mean(), 2)),
+    ).reset_index()
+    player_hero = player_hero[player_hero["Matches"] >= 2]
+    player_hero.columns = ["Spiller", "Hero", "Matches", "Win rate %", "Gns. perf", "Gns. KDA"]
+
+    for player in sorted(df["player_name"].unique()):
+        pdata = player_hero[player_hero["Spiller"] == player]
+        if pdata.empty:
+            continue
+        with st.expander(f"**{player}** – {len(pdata)} helte (min 2 matches)"):
+            col1, col2 = st.columns(2)
+            with col1:
+                top = pdata.nlargest(8, "Gns. perf")
+                fig = px.bar(top, x="Gns. perf", y="Hero", orientation="h",
+                             title="Bedste performance",
+                             color="Gns. perf", color_continuous_scale="RdYlGn",
+                             text="Gns. perf", hover_data=["Matches", "Win rate %"])
+                fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+                fig.update_layout(showlegend=False, height=350)
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                top = pdata.nlargest(8, "Matches")
+                fig = px.bar(top, x="Matches", y="Hero", orientation="h",
+                             title="Mest spillede",
+                             color="Win rate %", color_continuous_scale="RdYlGn",
+                             text="Matches", hover_data=["Gns. perf", "Win rate %"])
+                fig.update_traces(texttemplate='%{text}', textposition='outside')
+                fig.update_layout(showlegend=False, height=350)
+                st.plotly_chart(fig, use_container_width=True)
+
+
+def show_activity_page(df):
+    """Activity heatmap and personal records"""
+    st.header("📅 Aktivitet & Rekorder")
+
+    # --- HVORNÅR SPILLER VI? ---
+    st.subheader("🕐 Hvornår spiller vi?")
+    match_times = df.drop_duplicates("match_id")[["match_id", "match_date"]].copy()
+    day_map = {0: "Mandag", 1: "Tirsdag", 2: "Onsdag", 3: "Torsdag",
+               4: "Fredag", 5: "Lørdag", 6: "Søndag"}
+    day_order = list(day_map.values())
+
+    match_times["ugedag"] = match_times["match_date"].dt.dayofweek.map(day_map)
+    match_times["time"] = match_times["match_date"].dt.hour
+
+    heatmap_data = (
+        match_times.groupby(["ugedag", "time"])
+        .size()
+        .reset_index(name="Kampe")
+        .pivot(index="ugedag", columns="time", values="Kampe")
+        .fillna(0)
+    )
+    heatmap_data = heatmap_data.reindex([d for d in day_order if d in heatmap_data.index])
+
+    fig = px.imshow(
+        heatmap_data,
+        labels=dict(x="Tidspunkt (time)", y="Ugedag", color="Kampe"),
+        title="Kampe per ugedag og tidspunkt",
+        color_continuous_scale="Blues",
+        aspect="auto",
+    )
+    fig.update_xaxes(tickmode="linear", tick0=0, dtick=1)
+    fig.update_layout(height=350)
+    st.plotly_chart(fig, use_container_width=True)
+
+    if not match_times.empty:
+        top_day = match_times["ugedag"].value_counts().index[0]
+        top_hour = int(match_times["time"].value_counts().index[0])
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Mest aktive dag", top_day)
+        with col2:
+            st.metric("Peak tidspunkt", f"{top_hour}:00–{top_hour + 1}:00")
+        with col3:
+            st.metric("Unikke kampe i alt", len(match_times))
+
+    st.markdown("---")
+
+    # --- PERSONLIGE REKORDER ---
+    st.subheader("🏅 Personlige rekorder")
+    records_data = []
+    for player in sorted(df["player_name"].unique()):
+        pdata = df[df["player_name"] == player]
+        if pdata.empty:
+            continue
+        kda_row = pdata.loc[pdata["kda"].idxmax()]
+        perf_row = pdata.loc[pdata["performance_score"].idxmax()]
+        kills_row = pdata.loc[pdata["kills"].idxmax()]
+        records_data.append({
+            "Spiller": player,
+            "Bedste KDA": f"{kda_row['kda']:.2f} ({kda_row['hero']})",
+            "Højeste performance": f"{perf_row['performance_score']:.0f} ({perf_row['hero']})",
+            "Flest kills": f"{int(kills_row['kills'])} ({kills_row['hero']})",
+        })
+    st.dataframe(pd.DataFrame(records_data), use_container_width=True, hide_index=True)
+
+
 def show_match_history_page(df):
     """Match history page"""
     st.header("📋 Matches")
-    
+
     col1, col2, col3 = st.columns(3)
     with col1:
         show_count = st.selectbox("Vis matches", [10, 20, 50, 100], index=1)
@@ -1051,31 +1268,40 @@ def show_match_history_page(df):
         filter_result = st.selectbox("Resultat", ["Alle", "Wins", "Losses"])
     with col3:
         filter_party = st.selectbox("Type", ["Alle", "Party", "Solo"])
-    
+
     filtered_df = df.copy()
     if filter_result == "Wins":
         filtered_df = filtered_df[filtered_df["is_victory"] == True]
     elif filter_result == "Losses":
         filtered_df = filtered_df[filtered_df["is_victory"] == False]
-    
+
     if filter_party == "Party":
         filtered_df = filtered_df[filtered_df["is_party"] == True]
     elif filter_party == "Solo":
         filtered_df = filtered_df[filtered_df["is_party"] == False]
-    
+
     recent = filtered_df.sort_values("match_date", ascending=False).head(show_count)[
-        ["match_date", "player_name", "hero", "role", "lane", "is_victory", "performance_score", 
-         "kills", "deaths", "assists", "kda", "is_party", "lane_partner"]
+        ["match_id", "match_date", "player_name", "hero", "role", "lane", "is_victory",
+         "performance_score", "kills", "deaths", "assists", "kda", "is_party", "lane_partner"]
     ].copy()
-    
+
+    recent["link"] = recent["match_id"].apply(
+        lambda x: f"https://www.dotabuff.com/matches/{x}"
+    )
+    recent = recent.drop(columns=["match_id"])
     recent["match_date"] = recent["match_date"].dt.strftime("%Y-%m-%d %H:%M")
     recent["is_victory"] = recent["is_victory"].map({True: "✅ Win", False: "❌ Loss"})
     recent["is_party"] = recent["is_party"].map({True: "👥", False: "🧍"})
-    recent.columns = ["Dato", "Spiller", "Hero", "Rolle", "Lane", "Resultat", "Perf", 
-                     "K", "D", "A", "KDA", "Party", "Lane partner"]
-    
-    st.dataframe(recent, use_container_width=True, hide_index=True)
-    
+    recent.columns = ["Dato", "Spiller", "Hero", "Rolle", "Lane", "Resultat", "Perf",
+                      "K", "D", "A", "KDA", "Party", "Lane partner", "🔗"]
+
+    st.dataframe(
+        recent,
+        column_config={"🔗": st.column_config.LinkColumn("🔗", display_text="Dotabuff")},
+        use_container_width=True,
+        hide_index=True,
+    )
+
     st.subheader("💾 Eksport")
     csv = df.to_csv(index=False)
     st.download_button(
