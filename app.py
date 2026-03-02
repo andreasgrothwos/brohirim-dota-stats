@@ -393,7 +393,7 @@ def main():
         
         page = st.selectbox(
             "📄 Vælg side",
-            ["🏠 Overblik", "📊 Performance", "🎯 Rolle & position", "🤝 Lanes", "🏆 Seneste kamp", "📋 Matches"]
+            ["🏠 Overblik", "📊 Performance", "🎯 Rolle & position", "🤝 Lanes", "📋 Matches"]
         )
         
         st.markdown("---")
@@ -410,7 +410,7 @@ def main():
         time_range = st.selectbox(
             "Tidsperiode",
             options=["Alle data", "I dag", "Sidste 7 dage", "Sidste 30 dage", "Sidste 90 dage", "2025 kun", "Brugerdefineret"],
-            index=3,
+            index=2,
             help="Filtrer cached data - ingen API kald"
         )
         
@@ -491,16 +491,17 @@ def main():
         show_role_page(df)
     elif page == "🤝 Lanes":
         show_synergy_page(df)
-    elif page == "🏆 Seneste kamp":
-        show_latest_match_page(df, selected_players)
     elif page == "📋 Matches":
         show_match_history_page(df)
 
 
 def show_overview_page(df, selected_players):
-    """Overview page"""
+    """Overview page – seneste kamp øverst, derefter generel statistik"""
+    show_latest_match_page(df, selected_players)
+
+    st.markdown("---")
     display_player_cards(selected_players, df)
-    
+
     st.header("📊 Overblik")
     col1, col2, col3, col4 = st.columns(4)
     
