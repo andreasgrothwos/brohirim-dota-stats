@@ -46,6 +46,9 @@ BASE_DIR = Path.cwd()
 IMAGE_DIR = BASE_DIR / "images"
 CACHE_DIR = BASE_DIR / ".match_cache"
 
+# Bump when GraphQL schema adds new fields – forces a full re-fetch
+CACHE_SCHEMA_VERSION = 2
+
 def load_player_image(player_name):
     """Load player profile picture if it exists"""
     # Try both .jpg and .JPG extensions
@@ -65,7 +68,13 @@ def _load_disk_cache(player_name):
     if cache_file.exists():
         try:
             with open(cache_file, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+            # Old format was a plain list – version mismatch means re-fetch
+            if isinstance(data, list):
+                return []
+            if data.get("version", 1) != CACHE_SCHEMA_VERSION:
+                return []
+            return data.get("matches", [])
         except Exception:
             return []
     return []
@@ -77,7 +86,7 @@ def _save_disk_cache(player_name, matches):
     cache_file = CACHE_DIR / f"{player_name}.json"
     try:
         with open(cache_file, "w") as f:
-            json.dump(matches, f)
+            json.dump({"version": CACHE_SCHEMA_VERSION, "matches": matches}, f)
     except Exception as e:
         st.warning(f"Kunne ikke gemme cache for {player_name}: {e}")
 
@@ -102,6 +111,9 @@ def fetch_all_matches_for_player(steam_id, player_name, cutoff_date):
           startDateTime
           durationSeconds
           didRadiantWin
+          gameMode
+          lobbyType
+          bracket
           players {
             steamAccountId
             isVictory
@@ -117,6 +129,29 @@ def fetch_all_matches_for_player(steam_id, player_name, cutoff_date):
             level
             position
             lane
+            goldPerMinute
+            experiencePerMinute
+            networth
+            heroDamage
+            heroHealing
+            towerDamage
+            lastHits
+            denies
+            stuns
+            campsStacked
+            award
+            laneEfficiency
+            item0Id
+            item1Id
+            item2Id
+            item3Id
+            item4Id
+            item5Id
+            neutralItemId
+            steamAccount {
+              seasonRank
+              seasonLeaderboardRank
+            }
           }
         }
       }
@@ -209,28 +244,31 @@ def process_matches(matches, steam_id, player_name, all_steam_ids):
         match_id = match["id"]
         match_date = datetime.fromtimestamp(match["startDateTime"])
         duration_min = round(match["durationSeconds"] / 60, 1)
-        
+        game_mode = match.get("gameMode")
+        lobby_type = match.get("lobbyType")
+        bracket = match.get("bracket")
+
         players = match["players"]
         player_data = next((p for p in players if p["steamAccountId"] == steam_id), None)
-        
+
         if not player_data:
             continue
-        
+
         # Find Brohirim teammates
         is_radiant = player_data["isRadiant"]
         teammates = [p for p in players if p["isRadiant"] == is_radiant and p["steamAccountId"] != steam_id]
         brohirim_teammates = [t for t in teammates if t["steamAccountId"] in all_steam_ids]
-        
+
         is_party = len(brohirim_teammates) > 0
-        friend_names = [list(PLAYERS.keys())[list(PLAYERS.values()).index(t["steamAccountId"])] 
-                       for t in brohirim_teammates]
-        
+        friend_names = [list(PLAYERS.keys())[list(PLAYERS.values()).index(t["steamAccountId"])]
+                        for t in brohirim_teammates]
+
         # Calculate KDA
         kills = player_data["kills"]
         deaths = max(player_data["deaths"], 1)
         assists = player_data["assists"]
         kda = round((kills + assists) / deaths, 2)
-        
+
         # Map position to role
         position_map = {
             "POSITION_1": "Carry (Pos 1)",
@@ -241,7 +279,7 @@ def process_matches(matches, steam_id, player_name, all_steam_ids):
         }
         position = player_data.get("position")
         role = position_map.get(position, "Unknown")
-        
+
         # Get lane info
         lane_map = {
             "SAFE_LANE": "Safe Lane",
@@ -252,20 +290,26 @@ def process_matches(matches, steam_id, player_name, all_steam_ids):
         }
         lane = player_data.get("lane")
         lane_name = lane_map.get(lane, "Unknown")
-        
+
         # Find laning partners
         same_lane_teammates = [
-            t for t in brohirim_teammates 
+            t for t in brohirim_teammates
             if t.get("lane") == lane and lane is not None
         ]
-        lane_partner_names = [list(PLAYERS.keys())[list(PLAYERS.values()).index(t["steamAccountId"])] 
-                             for t in same_lane_teammates]
-        
+        lane_partner_names = [list(PLAYERS.keys())[list(PLAYERS.values()).index(t["steamAccountId"])]
+                              for t in same_lane_teammates]
+
+        # Steam account / rank
+        steam_account = player_data.get("steamAccount") or {}
+
         processed_data.append({
             "player_name": player_name,
             "match_id": match_id,
             "match_date": match_date,
             "duration_min": duration_min,
+            "game_mode": str(game_mode) if game_mode else None,
+            "lobby_type": str(lobby_type) if lobby_type else None,
+            "bracket": str(bracket) if bracket else None,
             "hero": player_data["hero"]["displayName"] if player_data.get("hero") else "Unknown",
             "is_victory": player_data["isVictory"],
             "performance_score": player_data["imp"],
@@ -279,10 +323,86 @@ def process_matches(matches, steam_id, player_name, all_steam_ids):
             "lane": lane_name,
             "is_party": is_party,
             "party_with": ", ".join(friend_names) if friend_names else None,
-            "lane_partner": ", ".join(lane_partner_names) if lane_partner_names else None
+            "lane_partner": ", ".join(lane_partner_names) if lane_partner_names else None,
+            # Economy
+            "gold_per_min": player_data.get("goldPerMinute"),
+            "xp_per_min": player_data.get("experiencePerMinute"),
+            "networth": player_data.get("networth"),
+            "last_hits": player_data.get("lastHits"),
+            "denies": player_data.get("denies"),
+            "lane_efficiency": player_data.get("laneEfficiency"),
+            # Damage & impact
+            "hero_damage": player_data.get("heroDamage"),
+            "hero_healing": player_data.get("heroHealing"),
+            "tower_damage": player_data.get("towerDamage"),
+            "stuns": player_data.get("stuns"),
+            "camps_stacked": player_data.get("campsStacked"),
+            # Award
+            "award": player_data.get("award") or "NONE",
+            # Items
+            "item0_id": player_data.get("item0Id"),
+            "item1_id": player_data.get("item1Id"),
+            "item2_id": player_data.get("item2Id"),
+            "item3_id": player_data.get("item3Id"),
+            "item4_id": player_data.get("item4Id"),
+            "item5_id": player_data.get("item5Id"),
+            "neutral_item_id": player_data.get("neutralItemId"),
+            # Rank
+            "season_rank": steam_account.get("seasonRank"),
+            "season_leaderboard_rank": steam_account.get("seasonLeaderboardRank"),
         })
     
     return processed_data
+
+
+RANK_NAMES = {
+    1: "Herald", 2: "Guardian", 3: "Crusader",
+    4: "Archon", 5: "Legend", 6: "Ancient", 7: "Divine", 8: "Immortal",
+}
+
+
+def decode_rank(season_rank):
+    """Convert Dota 2 seasonRank integer to a readable badge string."""
+    if season_rank is None or season_rank == 0:
+        return "Ukalibreret"
+    tier = int(season_rank) // 10
+    stars = int(season_rank) % 10
+    name = RANK_NAMES.get(tier, "Ukendt")
+    if tier == 8:
+        return "Immortal"
+    return f"{name} {'★' * stars}" if stars > 0 else name
+
+
+@st.cache_data(ttl=86400)
+def load_item_names():
+    """Load item ID → display name mapping from STRATZ constants (cached 24h)."""
+    query = "query { constants { items { id displayName } } }"
+    try:
+        resp = requests.post(
+            "https://api.stratz.com/graphql",
+            json={"query": query},
+            headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            items = resp.json().get("data", {}).get("constants", {}).get("items") or []
+            return {i["id"]: i["displayName"] for i in items if i.get("id") and i.get("displayName")}
+    except Exception:
+        pass
+    return {}
+
+
+def format_items(row, item_names):
+    """Return a comma-separated string of item names for a match row."""
+    names = []
+    for col in ["item0_id", "item1_id", "item2_id", "item3_id", "item4_id", "item5_id"]:
+        val = row.get(col)
+        if val and val > 0:
+            names.append(item_names.get(val, f"#{val}"))
+    neutral = row.get("neutral_item_id")
+    if neutral and neutral > 0:
+        names.append(f"[{item_names.get(neutral, f'#{neutral}')}]")
+    return ", ".join(names)
 
 
 @st.cache_data(ttl=7200)  # Cache processed DataFrame for 2 hours in-memory
@@ -373,6 +493,14 @@ def display_player_cards(selected_players, df):
             else:
                 break
 
+        # Award summary (only if award data exists)
+        award_summary = ""
+        if "award" in player_data.columns:
+            award_counts = player_data[player_data["award"] != "NONE"]["award"].value_counts()
+            award_icons = {"MVP": "🏆 MVP", "TOP_CORE": "⚔️ Top Core", "TOP_SUPPORT": "🛡️ Top Support"}
+            parts = [f"{award_icons.get(a, a)} ×{c}" for a, c in award_counts.head(3).items()]
+            award_summary = " · ".join(parts)
+
         player_stats.append({
             "name": player,
             "matches": matches,
@@ -381,6 +509,7 @@ def display_player_cards(selected_players, df):
             "form": form,
             "streak_count": streak_count,
             "streak_type": streak_type,
+            "award_summary": award_summary,
         })
 
     player_stats.sort(key=lambda x: x["avg_perf"], reverse=True)
@@ -405,6 +534,9 @@ def display_player_cards(selected_players, df):
                 st.success(f"🔥 {player_info['streak_count']} sejre i træk")
             elif player_info["streak_type"] == "loss" and player_info["streak_count"] >= 2:
                 st.error(f"💀 {player_info['streak_count']} tab i træk")
+
+            if player_info["award_summary"]:
+                st.caption(player_info["award_summary"])
 
     st.markdown("---")
 
@@ -464,7 +596,13 @@ def main():
             index=0,
             help="Seneste N matches per spiller"
         )
-        
+
+        show_turbo = st.checkbox(
+            "Inkluder Turbo-kampe",
+            value=False,
+            help="Turbo-kampe skæver GPM, damage og varighed – slå fra for clean statistik"
+        )
+
         st.markdown("---")
         if st.button("🔄 Opdater data", use_container_width=True,
                      help="Henter nye matches fra API (gemte historiske matches bevares)"):
@@ -508,6 +646,9 @@ def main():
     if limit_matches != "Alle matches":
         n = int(limit_matches.split()[-1])
         df = df.sort_values("match_date", ascending=False).groupby("player_name").head(n).reset_index(drop=True)
+
+    if not show_turbo and "game_mode" in df.columns:
+        df = df[df["game_mode"] != "TURBO"]
 
     if df.empty:
         st.warning("Ingen matches med nuværende filtre")
@@ -693,6 +834,62 @@ def show_performance_page(df, selected_players):
         fig.update_layout(showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
+    if "gold_per_min" in df.columns and df["gold_per_min"].notna().any():
+        st.markdown("---")
+        st.subheader("💰 GPM, XPM & Farming")
+        eco = df.groupby("player_name").agg(
+            GPM=("gold_per_min", "mean"),
+            XPM=("xp_per_min", "mean"),
+            LH=("last_hits", "mean"),
+            DN=("denies", "mean"),
+        ).round(1).reset_index()
+
+        col1, col2 = st.columns(2)
+        with col1:
+            fig = px.bar(eco, x="player_name", y="GPM", title="Gns. GPM",
+                         text="GPM", color="GPM", color_continuous_scale="YlOrRd")
+            fig.update_traces(texttemplate='%{text:.0f}', textposition='outside')
+            fig.update_layout(showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            fig = px.bar(eco, x="player_name", y="XPM", title="Gns. XPM",
+                         text="XPM", color="XPM", color_continuous_scale="Blues")
+            fig.update_traces(texttemplate='%{text:.0f}', textposition='outside')
+            fig.update_layout(showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+        col3, col4 = st.columns(2)
+        with col3:
+            fig = px.bar(eco, x="player_name", y="LH", title="Gns. Last Hits",
+                         text="LH", color="LH", color_continuous_scale="Greens")
+            fig.update_traces(texttemplate='%{text:.0f}', textposition='outside')
+            fig.update_layout(showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        with col4:
+            fig = px.bar(eco, x="player_name", y="DN", title="Gns. Denies",
+                         text="DN", color="DN", color_continuous_scale="Oranges")
+            fig.update_traces(texttemplate='%{text:.0f}', textposition='outside')
+            fig.update_layout(showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+    if "hero_damage" in df.columns and df["hero_damage"].notna().any():
+        st.markdown("---")
+        st.subheader("⚔️ Damage & Impact")
+        dmg = df.groupby("player_name").agg(
+            Hero_dmg=("hero_damage", "mean"),
+            Tower_dmg=("tower_damage", "mean"),
+            Healing=("hero_healing", "mean"),
+        ).round(0).reset_index()
+        dmg_long = dmg.melt(id_vars="player_name", var_name="Type", value_name="Damage")
+        label_map = {"Hero_dmg": "Hero Damage", "Tower_dmg": "Tower Damage", "Healing": "Healing"}
+        dmg_long["Type"] = dmg_long["Type"].map(label_map)
+        fig = px.bar(
+            dmg_long, x="player_name", y="Damage", color="Type", barmode="group",
+            title="Gns. per kamp",
+            color_discrete_map={"Hero Damage": "#e74c3c", "Tower Damage": "#3498db", "Healing": "#2ecc71"},
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
     st.markdown("---")
     st.subheader("📋 Detaljerede stats")
     detailed_stats = df.groupby("player_name").agg({
@@ -851,6 +1048,29 @@ def show_synergy_page(df):
             st.info("Behøver 2+ matches sammen")
     else:
         st.info("Ingen laning partner data")
+
+    # Support utility stats
+    if "stuns" in df.columns and df["stuns"].notna().any():
+        st.markdown("---")
+        st.subheader("🛡️ Support utility")
+        supp = df.groupby("player_name").agg(
+            Stuns=("stuns", "mean"),
+            Camps=("camps_stacked", "mean"),
+        ).round(2).reset_index()
+
+        col1, col2 = st.columns(2)
+        with col1:
+            fig = px.bar(supp, x="player_name", y="Stuns", title="Gns. Stun-tid per kamp (sek)",
+                         text="Stuns", color="Stuns", color_continuous_scale="Purples")
+            fig.update_traces(texttemplate='%{text:.1f}s', textposition='outside')
+            fig.update_layout(showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            fig = px.bar(supp, x="player_name", y="Camps", title="Gns. Camps Stacked per kamp",
+                         text="Camps", color="Camps", color_continuous_scale="Teal")
+            fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+            fig.update_layout(showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
 
 
 def show_latest_match_page(df, selected_players):
@@ -1238,9 +1458,38 @@ def show_activity_page(df):
 
     st.markdown("---")
 
+    # --- AWARDS ---
+    if "award" in df.columns and df["award"].notna().any() and (df["award"] != "NONE").any():
+        st.subheader("🏆 Awards")
+        award_icons = {"MVP": "🏆 MVP", "TOP_CORE": "⚔️ Top Core", "TOP_SUPPORT": "🛡️ Top Support"}
+        awards_df = df[df["award"] != "NONE"].copy()
+        awards_df["Award"] = awards_df["award"].map(award_icons).fillna(awards_df["award"])
+        awards_agg = awards_df.groupby(["player_name", "Award"]).size().reset_index(name="Antal")
+        fig = px.bar(awards_agg, x="player_name", y="Antal", color="Award", barmode="group",
+                     title="Antal awards per spiller",
+                     color_discrete_map={"🏆 MVP": "#FFD700", "⚔️ Top Core": "#e74c3c", "🛡️ Top Support": "#3498db"})
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown("---")
+
+    # --- MMR PROGRESSION ---
+    if "season_rank" in df.columns and df["season_rank"].notna().any():
+        st.subheader("📈 MMR Progression")
+        rank_df = df[df["season_rank"].notna()][["player_name", "match_date", "season_rank"]].copy()
+        rank_df = rank_df.sort_values("match_date")
+        rank_df["Rank label"] = rank_df["season_rank"].apply(decode_rank)
+        fig = px.line(rank_df, x="match_date", y="season_rank", color="player_name",
+                      title="MMR badge over tid (højere = bedre)",
+                      labels={"season_rank": "Rank (råværdi)", "match_date": "Dato", "player_name": "Spiller"},
+                      custom_data=["Rank label"])
+        fig.update_traces(hovertemplate="%{customdata[0]}<extra></extra>")
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown("---")
+
     # --- PERSONLIGE REKORDER ---
     st.subheader("🏅 Personlige rekorder")
     records_data = []
+    has_gpm = "gold_per_min" in df.columns and df["gold_per_min"].notna().any()
+    has_dmg = "hero_damage" in df.columns and df["hero_damage"].notna().any()
     for player in sorted(df["player_name"].unique()):
         pdata = df[df["player_name"] == player]
         if pdata.empty:
@@ -1248,12 +1497,19 @@ def show_activity_page(df):
         kda_row = pdata.loc[pdata["kda"].idxmax()]
         perf_row = pdata.loc[pdata["performance_score"].idxmax()]
         kills_row = pdata.loc[pdata["kills"].idxmax()]
-        records_data.append({
+        rec = {
             "Spiller": player,
             "Bedste KDA": f"{kda_row['kda']:.2f} ({kda_row['hero']})",
             "Højeste performance": f"{perf_row['performance_score']:.0f} ({perf_row['hero']})",
             "Flest kills": f"{int(kills_row['kills'])} ({kills_row['hero']})",
-        })
+        }
+        if has_gpm:
+            gpm_row = pdata.loc[pdata["gold_per_min"].idxmax()]
+            rec["Højeste GPM"] = f"{int(gpm_row['gold_per_min'])} ({gpm_row['hero']})"
+        if has_dmg:
+            dmg_row = pdata.loc[pdata["hero_damage"].idxmax()]
+            rec["Mest hero damage"] = f"{int(dmg_row['hero_damage']):,} ({dmg_row['hero']})"
+        records_data.append(rec)
     st.dataframe(pd.DataFrame(records_data), use_container_width=True, hide_index=True)
 
 
@@ -1280,20 +1536,54 @@ def show_match_history_page(df):
     elif filter_party == "Solo":
         filtered_df = filtered_df[filtered_df["is_party"] == False]
 
+    base_cols = ["match_id", "match_date", "player_name", "hero", "role", "lane",
+                 "is_victory", "performance_score", "kills", "deaths", "assists", "kda",
+                 "is_party", "lane_partner"]
+
+    # Add optional columns when present
+    has_gpm = "gold_per_min" in filtered_df.columns and filtered_df["gold_per_min"].notna().any()
+    has_items = "item0_id" in filtered_df.columns
+    has_game_mode = "game_mode" in filtered_df.columns
+
+    extra_cols = []
+    if has_gpm:
+        extra_cols.append("gold_per_min")
+    if has_items:
+        extra_cols += ["item0_id", "item1_id", "item2_id", "item3_id", "item4_id", "item5_id", "neutral_item_id"]
+    if has_game_mode:
+        extra_cols.append("game_mode")
+
     recent = filtered_df.sort_values("match_date", ascending=False).head(show_count)[
-        ["match_id", "match_date", "player_name", "hero", "role", "lane", "is_victory",
-         "performance_score", "kills", "deaths", "assists", "kda", "is_party", "lane_partner"]
+        base_cols + extra_cols
     ].copy()
 
-    recent["link"] = recent["match_id"].apply(
-        lambda x: f"https://www.dotabuff.com/matches/{x}"
-    )
+    recent["link"] = recent["match_id"].apply(lambda x: f"https://www.dotabuff.com/matches/{x}")
     recent = recent.drop(columns=["match_id"])
     recent["match_date"] = recent["match_date"].dt.strftime("%Y-%m-%d %H:%M")
     recent["is_victory"] = recent["is_victory"].map({True: "✅ Win", False: "❌ Loss"})
     recent["is_party"] = recent["is_party"].map({True: "👥", False: "🧍"})
-    recent.columns = ["Dato", "Spiller", "Hero", "Rolle", "Lane", "Resultat", "Perf",
-                      "K", "D", "A", "KDA", "Party", "Lane partner", "🔗"]
+
+    col_names = ["Dato", "Spiller", "Hero", "Rolle", "Lane", "Resultat", "Perf",
+                 "K", "D", "A", "KDA", "Party", "Lane partner"]
+    if has_gpm:
+        recent["gold_per_min"] = recent["gold_per_min"].round(0).astype("Int64")
+        col_names.append("GPM")
+    if has_items:
+        item_names = load_item_names()
+        item_id_cols = ["item0_id", "item1_id", "item2_id", "item3_id", "item4_id", "item5_id", "neutral_item_id"]
+        recent["Items"] = recent.apply(lambda r: format_items(r, item_names), axis=1)
+        recent = recent.drop(columns=item_id_cols)
+        col_names.append("Items")
+    if has_game_mode:
+        gm_labels = {"TURBO": "⚡ Turbo", "ALL_PICK_RANKED": "🏅 Ranked", "ALL_PICK": "🎮 Normal",
+                     "CAPTAINS_MODE": "⚔️ CM", "ABILITY_DRAFT": "🎲 AD"}
+        recent["game_mode"] = recent["game_mode"].apply(
+            lambda m: gm_labels.get(m, "🎮 " + (m or "").replace("_", " ").title() if m else "")
+        )
+        col_names.append("Mode")
+
+    col_names.append("🔗")
+    recent.columns = col_names
 
     st.dataframe(
         recent,
