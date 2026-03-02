@@ -135,19 +135,19 @@ def fetch_all_matches_for_player(steam_id, player_name, cutoff_date):
             heroDamage
             heroHealing
             towerDamage
-            lastHits
-            denies
-            stuns
-            campsStacked
+            numLastHits
+            numDenies
             award
-            laneEfficiency
             item0Id
             item1Id
             item2Id
             item3Id
             item4Id
             item5Id
-            neutralItemId
+            backpack0Id
+            backpack1Id
+            backpack2Id
+            neutral0Id
             steamAccount {
               seasonRank
               seasonLeaderboardRank
@@ -328,25 +328,25 @@ def process_matches(matches, steam_id, player_name, all_steam_ids):
             "gold_per_min": player_data.get("goldPerMinute"),
             "xp_per_min": player_data.get("experiencePerMinute"),
             "networth": player_data.get("networth"),
-            "last_hits": player_data.get("lastHits"),
-            "denies": player_data.get("denies"),
-            "lane_efficiency": player_data.get("laneEfficiency"),
+            "last_hits": player_data.get("numLastHits"),
+            "denies": player_data.get("numDenies"),
             # Damage & impact
             "hero_damage": player_data.get("heroDamage"),
             "hero_healing": player_data.get("heroHealing"),
             "tower_damage": player_data.get("towerDamage"),
-            "stuns": player_data.get("stuns"),
-            "camps_stacked": player_data.get("campsStacked"),
             # Award
             "award": player_data.get("award") or "NONE",
-            # Items
+            # Items (main slots + backpack + neutral)
             "item0_id": player_data.get("item0Id"),
             "item1_id": player_data.get("item1Id"),
             "item2_id": player_data.get("item2Id"),
             "item3_id": player_data.get("item3Id"),
             "item4_id": player_data.get("item4Id"),
             "item5_id": player_data.get("item5Id"),
-            "neutral_item_id": player_data.get("neutralItemId"),
+            "backpack0_id": player_data.get("backpack0Id"),
+            "backpack1_id": player_data.get("backpack1Id"),
+            "backpack2_id": player_data.get("backpack2Id"),
+            "neutral_item_id": player_data.get("neutral0Id"),
             # Rank
             "season_rank": steam_account.get("seasonRank"),
             "season_leaderboard_rank": steam_account.get("seasonLeaderboardRank"),
@@ -399,6 +399,10 @@ def format_items(row, item_names):
         val = row.get(col)
         if val and val > 0:
             names.append(item_names.get(val, f"#{val}"))
+    for col in ["backpack0_id", "backpack1_id", "backpack2_id"]:
+        val = row.get(col)
+        if val and val > 0:
+            names.append(f"({item_names.get(val, f'#{val}')})")
     neutral = row.get("neutral_item_id")
     if neutral and neutral > 0:
         names.append(f"[{item_names.get(neutral, f'#{neutral}')}]")
@@ -1549,7 +1553,8 @@ def show_match_history_page(df):
     if has_gpm:
         extra_cols.append("gold_per_min")
     if has_items:
-        extra_cols += ["item0_id", "item1_id", "item2_id", "item3_id", "item4_id", "item5_id", "neutral_item_id"]
+        extra_cols += ["item0_id", "item1_id", "item2_id", "item3_id", "item4_id", "item5_id",
+                       "backpack0_id", "backpack1_id", "backpack2_id", "neutral_item_id"]
     if has_game_mode:
         extra_cols.append("game_mode")
 
@@ -1570,7 +1575,8 @@ def show_match_history_page(df):
         col_names.append("GPM")
     if has_items:
         item_names = load_item_names()
-        item_id_cols = ["item0_id", "item1_id", "item2_id", "item3_id", "item4_id", "item5_id", "neutral_item_id"]
+        item_id_cols = ["item0_id", "item1_id", "item2_id", "item3_id", "item4_id", "item5_id",
+                        "backpack0_id", "backpack1_id", "backpack2_id", "neutral_item_id"]
         recent["Items"] = recent.apply(lambda r: format_items(r, item_names), axis=1)
         recent = recent.drop(columns=item_id_cols)
         col_names.append("Items")
